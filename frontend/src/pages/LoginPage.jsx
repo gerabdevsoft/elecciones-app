@@ -107,11 +107,6 @@ export default function LoginPage() {
             </Button>
           </form>
 
-          <div className="mt-8 p-4 rounded-lg bg-slate-100 border border-slate-200 text-xs text-slate-600 font-data leading-relaxed">
-            <div className="font-semibold text-slate-800 mb-1">Cuentas semilla:</div>
-            Admin · gerabdevsoft@gmail.com / STRE_Admin_2026<br/>
-            Operador · operador@stre.bo / Operador_2026
-          </div>
         </div>
       </div>
     </div>

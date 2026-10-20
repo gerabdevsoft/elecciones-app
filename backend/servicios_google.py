@@ -12,7 +12,7 @@ from google.cloud import documentai, storage
 from google.oauth2 import service_account
 
 
-CONFIANZA_MINIMA_ENTIDAD = 0.75
+CONFIANZA_MINIMA_ENTIDAD = 0.90
 
 
 def _credenciales_google():
@@ -42,13 +42,15 @@ def _bucket_actas():
 
 def subir_archivo_google(ruta: str, contenido: bytes, tipo_contenido: str) -> str:
     objeto = _bucket_actas().blob(ruta)
-    objeto.upload_from_string(contenido, content_type=tipo_contenido)
+    objeto.cache_control = "private, no-store"
+    objeto.upload_from_string(contenido, content_type=tipo_contenido, timeout=120)
     return objeto.name
 
 
 def descargar_archivo_google(ruta: str) -> tuple[bytes, str]:
     objeto = _bucket_actas().blob(ruta)
-    contenido = objeto.download_as_bytes()
+    objeto.reload(timeout=30)
+    contenido = objeto.download_as_bytes(timeout=120)
     return contenido, objeto.content_type or "application/octet-stream"
 
 
@@ -79,7 +81,7 @@ def procesar_documento_google(contenido: bytes, tipo_contenido: str):
             mime_type=tipo_contenido,
         ),
     )
-    return cliente.process_document(request=solicitud).document
+    return cliente.process_document(request=solicitud, timeout=120).document
 
 
 def normalizar_nombre(texto: str) -> str:
@@ -89,7 +91,10 @@ def normalizar_nombre(texto: str) -> str:
 
 
 def _entidades_de(entidades: list[Any], tipo: str) -> list[Any]:
-    return [entidad for entidad in entidades if getattr(entidad, "type_", "") == tipo]
+    return [
+        entidad for entidad in entidades
+        if getattr(entidad, "type_", "").rsplit("/", 1)[-1] == tipo
+    ]
 
 
 def _texto_de(entidad: Any) -> str:
@@ -133,8 +138,8 @@ def _numero_entidad(entidades: list[Any], tipo: str, etiqueta: str, errores: lis
 
 
 def _mesa_normalizada(texto: str) -> str:
-    digitos = re.sub(r"\D", "", texto or "")
-    return str(int(digitos)) if digitos else normalizar_nombre(texto)
+    texto_limpio = (texto or "").strip()
+    return str(int(texto_limpio)) if texto_limpio.isdigit() else normalizar_nombre(texto_limpio)
 
 
 def validar_y_mapear_resultados(
@@ -164,8 +169,6 @@ def validar_y_mapear_resultados(
     conteos: list[dict[str, Any]] = []
     franjas_procesadas: set[str] = set()
     for entidad_franja in franjas_documento:
-        if _confianza_de(entidad_franja) < CONFIANZA_MINIMA_ENTIDAD:
-            errores.append("Confianza insuficiente para una franja de votación")
         campos_franja = list(getattr(entidad_franja, "properties", []) or [])
         entidad_nombre = _campo_unico(campos_franja, "nombre_franja", "nombre de franja", errores)
         if entidad_nombre is None:
@@ -200,8 +203,6 @@ def validar_y_mapear_resultados(
         votos_candidatos: dict[str, int] = {}
         candidatos_documento = _entidades_de(campos_franja, "candidato")
         for entidad_candidato in candidatos_documento:
-            if _confianza_de(entidad_candidato) < CONFIANZA_MINIMA_ENTIDAD:
-                errores.append("Confianza insuficiente para un candidato")
             campos_candidato = list(getattr(entidad_candidato, "properties", []) or [])
             entidad_nombre_candidato = _campo_unico(
                 campos_candidato,

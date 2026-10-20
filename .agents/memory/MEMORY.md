@@ -1,0 +1,1 @@
+- [OCR y almacenamiento Google](ocr_google.md) — usar Document AI Custom Extractor y GCS; no usar Emergent ni OCI.

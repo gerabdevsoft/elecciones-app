@@ -200,7 +200,48 @@ export default function TrepPublicoPage() {
 function DetalleActaPublica({ acta, error }) {
   if (error) return <div className="border border-amber-300 bg-amber-50 p-8 text-center text-sm text-amber-800" data-testid="error-acta-publica">{error}</div>;
   if (!acta) return <div className="border border-dashed border-slate-300 bg-white p-8 text-center text-sm text-slate-400" data-testid="acta-publica-vacia">Seleccione un acta consolidada para ver la imagen y sus datos de solo lectura.</div>;
-  return <section className="border border-slate-200 bg-white p-4 sm:p-6" data-testid="detalle-acta-publica"><div className="flex flex-wrap items-start justify-between gap-3"><div><div className="text-[10px] font-data uppercase tracking-widest text-slate-500">Acta consolidada</div><h2 className="mt-1 font-display text-2xl font-bold">Ánfora {acta.numero_anfora}</h2><div className="mt-1 text-sm text-slate-600">{acta.recinto} · {acta.ambiente}</div>{acta.tipo_mesa && <div className="mt-1 text-xs font-data uppercase text-blue-700">Mesa {acta.tipo_mesa}</div>}</div><div className="text-xs font-data text-slate-400">{acta.actualizado_en}</div></div>{acta.imagen_url ? <img src={`${process.env.REACT_APP_BACKEND_URL}${acta.imagen_url}`} alt={`Acta consolidada ${acta.numero_anfora}`} className="mt-6 max-h-[680px] w-full border border-slate-200 object-contain" data-testid="imagen-acta-publica" /> : <div className="mt-6 flex items-center gap-2 border border-dashed border-slate-300 p-5 text-sm text-slate-400"><FileImage className="w-5 h-5" /> Imagen no disponible.</div>}<div className="mt-6 space-y-4">{acta.conteos.map((conteo) => <article key={`${conteo.papeleta}-${conteo.franja}`} className="border border-slate-200 p-4"><div className="text-[10px] font-data uppercase tracking-widest text-slate-500">{conteo.papeleta}</div><h3 className="mt-1 font-bold">{conteo.franja}</h3><div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">{conteo.candidatos.map((candidato) => <div key={candidato.nombre} className="flex justify-between border-t border-slate-100 pt-2 text-sm"><span>{candidato.nombre}</span><strong className="font-data">{candidato.votos}</strong></div>)}</div><div className="mt-3 flex gap-4 text-xs font-data text-slate-500"><span>Blancos: {conteo.votos_blancos}</span><span>Nulos: {conteo.votos_nulos}</span></div></article>)}</div></section>;
+  const urlArchivo = `${process.env.REACT_APP_BACKEND_URL || ""}${acta.imagen_url || ""}`;
+  const esPdf = /\.pdf(?:[?#]|$)/i.test(acta.imagen_url || "");
+  return (
+    <section className="border border-slate-200 bg-white p-4 sm:p-6" data-testid="detalle-acta-publica">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <div className="text-[10px] font-data uppercase tracking-widest text-slate-500">Acta consolidada</div>
+          <h2 className="mt-1 font-display text-2xl font-bold">Ánfora {acta.numero_anfora}</h2>
+          <div className="mt-1 text-sm text-slate-600">{acta.recinto} · {acta.ambiente}</div>
+          {acta.tipo_mesa && <div className="mt-1 text-xs font-data uppercase text-blue-700">Mesa {acta.tipo_mesa}</div>}
+        </div>
+        <div className="text-xs font-data text-slate-400">{acta.actualizado_en}</div>
+      </div>
+      {acta.imagen_url ? (
+        esPdf
+          ? <iframe src={urlArchivo} title={`Acta consolidada ${acta.numero_anfora} en PDF`} className="mt-6 h-[680px] w-full border border-slate-200" data-testid="pdf-acta-publica" />
+          : <img src={urlArchivo} alt={`Acta consolidada ${acta.numero_anfora}`} className="mt-6 max-h-[680px] w-full border border-slate-200 object-contain" data-testid="imagen-acta-publica" />
+      ) : (
+        <div className="mt-6 flex items-center gap-2 border border-dashed border-slate-300 p-5 text-sm text-slate-400">
+          <FileImage className="w-5 h-5" /> Imagen no disponible.
+        </div>
+      )}
+      <div className="mt-6 space-y-4">
+        {acta.conteos.map((conteo) => (
+          <article key={`${conteo.papeleta}-${conteo.franja}`} className="border border-slate-200 p-4">
+            <div className="text-[10px] font-data uppercase tracking-widest text-slate-500">{conteo.papeleta}</div>
+            <h3 className="mt-1 font-bold">{conteo.franja}</h3>
+            <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
+              {conteo.candidatos.map((candidato) => (
+                <div key={candidato.nombre} className="flex justify-between border-t border-slate-100 pt-2 text-sm">
+                  <span>{candidato.nombre}</span><strong className="font-data">{candidato.votos}</strong>
+                </div>
+              ))}
+            </div>
+            <div className="mt-3 flex gap-4 text-xs font-data text-slate-500">
+              <span>Blancos: {conteo.votos_blancos}</span><span>Nulos: {conteo.votos_nulos}</span>
+            </div>
+          </article>
+        ))}
+      </div>
+    </section>
+  );
 }
 
 export function CabeceraPublica() {

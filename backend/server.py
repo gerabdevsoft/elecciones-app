@@ -1490,6 +1490,28 @@ async def procesar_ocr(
     if not mesa:
         raise HTTPException(409, "No se encontró la mesa asociada al ánfora")
 
+    papeletas_asignadas = set(anfora.get("id_papeletas") or [])
+    if not papeletas_asignadas:
+        raise HTTPException(409, "El ánfora no tiene papeletas asignadas")
+    if id_papeleta and id_papeleta not in papeletas_asignadas:
+        raise HTTPException(400, "La papeleta no pertenece al ánfora seleccionada")
+    franjas_esperadas = []
+    for papeleta in proc.get("papeletas", []):
+        if papeleta["id_papeleta"] not in papeletas_asignadas:
+            continue
+        if id_papeleta and papeleta["id_papeleta"] != id_papeleta:
+            continue
+        for franja in papeleta.get("franjas", []):
+            franjas_esperadas.append({
+                "id_papeleta": papeleta["id_papeleta"],
+                "nombre_papeleta": papeleta.get("nombre", ""),
+                "id_franja": franja["id_franja"],
+                "nombre_franja": franja["titulo"],
+                "candidatos": franja.get("candidatos", []),
+            })
+    if not franjas_esperadas:
+        raise HTTPException(409, "El ánfora no tiene franjas configuradas para procesar")
+
     componente_eleccion = re.sub(r"[^a-zA-Z0-9_-]", "-", id_eleccion).strip("-")
     componente_mesa = re.sub(r"[^a-zA-Z0-9_-]", "-", str(mesa["numero_mesa"])).strip("-")
     componente_anfora = re.sub(r"[^a-zA-Z0-9_-]", "-", id_anfora).strip("-")
@@ -1509,38 +1531,20 @@ async def procesar_ocr(
         logger.error("No se pudo guardar el archivo en Google Cloud Storage (%s)", type(e).__name__)
         raise HTTPException(503, "No se pudo guardar el acta en Google Cloud Storage")
 
-    papeletas_asignadas = set(anfora.get("id_papeletas") or [])
-    franjas_esperadas = []
-    for papeleta in proc.get("papeletas", []):
-        if papeletas_asignadas and papeleta["id_papeleta"] not in papeletas_asignadas:
-            continue
-        if id_papeleta and papeleta["id_papeleta"] != id_papeleta:
-            continue
-        for franja in papeleta.get("franjas", []):
-            franjas_esperadas.append({
-                "id_papeleta": papeleta["id_papeleta"],
-                "nombre_papeleta": papeleta.get("nombre", ""),
-                "id_franja": franja["id_franja"],
-                "nombre_franja": franja["titulo"],
-                "candidatos": franja.get("candidatos", []),
-            })
-    if not franjas_esperadas:
-        raise HTTPException(409, "El ánfora no tiene franjas configuradas para procesar")
-
     try:
         documento = await asyncio.to_thread(
             procesar_documento_google,
             contenido,
             tipo_mime,
         )
-        ocr_data = validar_y_mapear_resultados(
+        resultado_ocr = validar_y_mapear_resultados(
             documento,
             franjas_esperadas,
             str(mesa["numero_mesa"]),
         )
     except Exception as e:
         logger.error("Error al procesar el acta con Document AI (%s)", type(e).__name__)
-        ocr_data = {
+        resultado_ocr = {
             "error": "Document AI no pudo procesar el acta. Revise la configuración y vuelva a intentarlo.",
             "conteos": [],
         }
@@ -1550,12 +1554,13 @@ async def procesar_ocr(
         "url_temporal": url_temporal,
         "ruta_storage": ruta_final,
         "tipo_contenido": tipo_mime,
-        "ocr": ocr_data,
+        "ocr": resultado_ocr,
     }
 
 @api.get("/imagenes/{path:path}")
 async def servir_imagen(path: str, authorization: Optional[str] = Header(None)):
-    if ".." in path.split("/") or not path:
+    prefijos_permitidos = ("actas/", "candidatos/", "logos/", "stre-electoral/actas/")
+    if ".." in path.split("/") or not path.startswith(prefijos_permitidos):
         raise HTTPException(404, "Imagen no encontrada")
     try:
         if path.startswith("actas/") or path.startswith("stre-electoral/actas/"):
@@ -2136,7 +2141,9 @@ async def admin_upload_imagen(archivo: UploadFile = File(...), tipo: str = Form(
     if len(contenido) > TAMANO_MAXIMO_ACTA:
         raise HTTPException(413, "El archivo supera el límite de 20 MB")
     tipo_mime, extension = _tipo_archivo_subido(archivo.filename or "", contenido, permitir_pdf=False)
-    tipo_seguro = re.sub(r"[^a-z0-9_-]", "", tipo.lower())[:32] or "imagen"
+    if tipo not in {"candidato", "logo"}:
+        raise HTTPException(400, "Tipo de imagen administrativa no admitido")
+    tipo_seguro = tipo
     ruta = f"{tipo_seguro}s/{uuid.uuid4()}.{extension}"
     try:
         ruta_final = await asyncio.to_thread(

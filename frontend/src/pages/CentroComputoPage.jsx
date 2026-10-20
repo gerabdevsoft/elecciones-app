@@ -52,8 +52,8 @@ export default function CentroComputoPage() {
   const [actaActual, setActaActual] = useState(null);
   const [meta, setMeta] = useState({ departamento: "La Paz", ciudad: "La Paz", recinto: "", ambiente: "", numero_anfora: "" });
   const [urlImagen, setUrlImagen] = useState(null);
-  const [urlTemporal, setUrlTemporal] = useState(null);
-  const [tipoContenidoActa, setTipoContenidoActa] = useState(null);
+  const [urlTemporal, cambiarUrlTemporal] = useState(null);
+  const [tipoContenidoActa, cambiarTipoContenidoActa] = useState(null);
   const [imagenSeguraBlob, setImagenSeguraBlob] = useState(null);
   const [rutaStorage, setRutaStorage] = useState(null);
   const [conteos, setConteos] = useState({});
@@ -71,7 +71,7 @@ export default function CentroComputoPage() {
   const esBloqueado = actaActual?.esta_bloqueada || false;
   const puedeCargar = permisos?.puede_cargar || false;
   const puedeValidar = permisos?.puede_validar || false;
-  const puedeEditar = !cargandoActa && !esBloqueado && (permisos?.es_admin || puedeCargar || puedeValidar);
+  const puedeEditar = !subiendo && !cargandoActa && !esBloqueado && (permisos?.es_admin || puedeCargar || puedeValidar);
   const claveEstadoActual = esBloqueado ? "consolidada" : (actaActual?.estado || "sin_datos");
   const estadoActual = ESTADO_ANFORA[claveEstadoActual] || {
     etiqueta: String(claveEstadoActual).replaceAll("_", " "),
@@ -93,19 +93,19 @@ export default function CentroComputoPage() {
       setImagenSeguraBlob(null);
       return undefined;
     }
-    let urlTemporal = null;
+    let urlBlob = null;
     let activa = true;
     api.get(`/imagenes/${rutaStorage}`, { responseType: "blob" })
       .then(({ data }) => {
-        urlTemporal = URL.createObjectURL(data);
-        if (activa) setImagenSeguraBlob(urlTemporal);
+        urlBlob = URL.createObjectURL(data);
+        if (activa) setImagenSeguraBlob(urlBlob);
       })
       .catch(() => {
         if (activa) setImagenSeguraBlob(null);
       });
     return () => {
       activa = false;
-      if (urlTemporal) URL.revokeObjectURL(urlTemporal);
+      if (urlBlob) URL.revokeObjectURL(urlBlob);
     };
   }, [urlImagen, rutaStorage, urlTemporal]);
   useEffect(() => {
@@ -144,6 +144,8 @@ export default function CentroComputoPage() {
     setActaActual(null);
     setCargandoActa(true);
     setUrlImagen(null); setRutaStorage(null);
+    cambiarUrlTemporal(null);
+    cambiarTipoContenidoActa(null);
     setMeta({ departamento: "", ciudad: "", recinto: "", ambiente: "", numero_anfora: anfora.numero_anfora });
     setConteos(conteosIniciales(procesoActivo, (procesoActivo.papeletas || []).filter((papeleta) => anfora.id_papeletas?.includes(papeleta.id_papeleta))));
     setOcrResumen(null);
@@ -181,8 +183,8 @@ export default function CentroComputoPage() {
     setAnforaSeleccionada(null);
     setActaActual(null);
     setUrlImagen(null);
-    setUrlTemporal(null);
-    setTipoContenidoActa(null);
+    cambiarUrlTemporal(null);
+    cambiarTipoContenidoActa(null);
     setRutaStorage(null);
     setConteos({});
     setOcrResumen(null);
@@ -195,9 +197,9 @@ export default function CentroComputoPage() {
   const cargarActa = (a, anfora = anforaSeleccionada) => {
     setActaActual(a);
     setUrlImagen(a.url_imagen);
-    setUrlTemporal(null);
+    cambiarUrlTemporal(null);
     setRutaStorage(a.ruta_storage);
-    setTipoContenidoActa(a.ruta_storage?.toLowerCase().endsWith(".pdf") ? "application/pdf" : "image/jpeg");
+    cambiarTipoContenidoActa(a.ruta_storage?.toLowerCase().endsWith(".pdf") ? "application/pdf" : "image/jpeg");
     setMeta({
       departamento: a.departamento, ciudad: a.ciudad, recinto: a.recinto,
       ambiente: a.ambiente, numero_anfora: a.numero_anfora,
@@ -231,19 +233,25 @@ export default function CentroComputoPage() {
       toast.error("Seleccione una fotografía JPG, PNG, WEBP o un archivo PDF.");
       return;
     }
+    if (archivo.size > 20 * 1024 * 1024) {
+      toast.error("El archivo supera el límite de 20 MB.");
+      return;
+    }
     try {
       setSubiendo(true);
+      const solicitudActual = solicitudAnforaRef.current;
       const fd = new FormData();
       fd.append("id_eleccion", procesoActivo.id_eleccion);
       fd.append("id_anfora", anforaSeleccionada.id);
       fd.append("archivo", archivo);
       const { data } = await api.post("/procesar-ocr", fd, { headers: { "Content-Type": "multipart/form-data" } });
+      if (solicitudActual !== solicitudAnforaRef.current) return;
       setUrlImagen(data.url_imagen);
-      setUrlTemporal(data.url_temporal);
-      setTipoContenidoActa(data.tipo_contenido);
+      cambiarUrlTemporal(data.url_temporal);
+      cambiarTipoContenidoActa(data.tipo_contenido);
       setRutaStorage(data.ruta_storage);
       if (data.ocr?.conteos) {
-        const nuevo = { ...conteos };
+        const nuevo = conteosIniciales(procesoActivo, papeletasActivas);
         data.ocr.conteos.forEach((oc) => {
           if (nuevo[oc.id_franja]) {
             Object.entries(oc.votos_por_candidato || {}).forEach(([idc, v]) => {
@@ -278,7 +286,7 @@ export default function CentroComputoPage() {
       };
       const { data } = await api.post("/guardar-acta", payload);
       setActaActual(data);
-      setUrlTemporal(null);
+      cambiarUrlTemporal(null);
       toast.success("Acta guardada (borrador).");
     } catch (e) {
       toast.error(formatearError(e?.response?.data?.detail) || "Error al guardar");
@@ -439,6 +447,7 @@ export default function CentroComputoPage() {
                 style={{ transform: `scale(${zoom}) rotate(${rotacion}deg)`, transition: "transform 200ms ease" }}
                 className="max-w-full origin-center shadow-2xl border border-slate-700"
                 data-testid="acta-imagen"
+                onError={() => cambiarUrlTemporal(null)}
               />
             ) : (
               <div className="text-center text-slate-500">
@@ -454,7 +463,7 @@ export default function CentroComputoPage() {
           </div>
           {urlImagen && (
             <div className="p-3 border-t border-slate-800 flex items-center justify-between text-xs text-slate-400 font-data">
-              <span className="flex items-center gap-2"><Sparkles className="w-3.5 h-3.5 text-[#7C3AED]" /> Cliente-side compression aplicada</span>
+              <span className="flex items-center gap-2"><Sparkles className="w-3.5 h-3.5 text-[#7C3AED]" /> Original conservado en almacenamiento privado</span>
               <button className="text-[#7C3AED] hover:text-[#A78BFA]" onClick={() => inputFile.current?.click()} data-testid="ocr-preview-button">Reemplazar / OCR de nuevo</button>
             </div>
           )}
@@ -576,7 +585,15 @@ export default function CentroComputoPage() {
 
           {ocrResumen?.error && (
             <div className="mt-4 p-3 bg-amber-50 border border-amber-200 text-amber-800 text-xs rounded-md flex gap-2">
-              <AlertTriangle className="w-4 h-4 shrink-0" /> OCR devolvió: {ocrResumen.error}
+              <AlertTriangle className="w-4 h-4 shrink-0" />
+              <div>
+                <p>{ocrResumen.error}</p>
+                {ocrResumen.errores_validacion?.length > 0 && (
+                  <ul className="mt-2 list-disc pl-4">
+                    {ocrResumen.errores_validacion.map((mensaje) => <li key={mensaje}>{mensaje}</li>)}
+                  </ul>
+                )}
+              </div>
             </div>
           )}
 
