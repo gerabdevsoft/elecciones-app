@@ -3093,139 +3093,24 @@ async def agregacion_por_nivel(
 async def raiz():
     return {"servicio": "STRE Backend", "estado": "activo", "version": "1.0.0"}
 
-# ------------- Startup: seeds -------------
-async def seed_admin_y_operador():
-    admin_email = (os.environ.get("ADMIN_EMAIL") or "").lower()
-    admin_pw = os.environ.get("ADMIN_PASSWORD") or ""
-    if not admin_email or not admin_pw:
+# ------------- Inicio: superusuario -------------
+async def crear_superusuario():
+    correo_admin = (os.environ.get("ADMIN_EMAIL") or "").lower()
+    contrasena_admin = os.environ.get("ADMIN_PASSWORD") or ""
+    if not correo_admin or not contrasena_admin:
         logger.error("ADMIN_EMAIL y ADMIN_PASSWORD son obligatorios para inicializar STRE")
         return
-    if not await db.usuarios.find_one({"email": admin_email}):
-        u = Usuario(email=admin_email, nombre_completo="Administrador STRE", rol="admin")
-        doc = u.model_dump()
-        doc["hash_contrasena"] = hashear_contrasena(admin_pw)
-        doc["creado_en"] = doc["creado_en"].isoformat()
-        await db.usuarios.insert_one(doc)
-        logger.info(f"Admin sembrado: {admin_email}")
-
-async def seed_procesos_demo():
-    # Limpia datos con estructura antigua (papeletas con candidatos directos, sin franjas)
-    legado = await db.procesos_electorales.find_one({"papeletas.0.candidatos": {"$exists": True}})
-    if legado:
-        await db.procesos_electorales.delete_many({})
-        await db.actas.delete_many({})
-    if await db.procesos_electorales.count_documents({}) > 0:
-        return
-
-    procesos = []
-
-    # --- Nacional: 1 boleta con 2 franjas (Presidente/Vice + Diputados) ---
-    presidenciales = [
-        {"nombre": "Luis Arce Catacora", "partido": "Movimiento al Socialismo", "sigla": "MAS-IPSP", "color_hex": "#0EA5E9", "numero_lista": 1},
-        {"nombre": "Samuel Doria Medina", "partido": "Unidad Nacional", "sigla": "UN", "color_hex": "#F59E0B", "numero_lista": 2},
-        {"nombre": "Carlos Mesa Gisbert", "partido": "Comunidad Ciudadana", "sigla": "CC", "color_hex": "#DC2626", "numero_lista": 3},
-    ]
-    diputados = [
-        {"nombre": "María Fernanda López", "partido": "MAS-IPSP", "sigla": "MAS", "color_hex": "#0EA5E9"},
-        {"nombre": "Roberto Aguilar", "partido": "Comunidad Ciudadana", "sigla": "CC", "color_hex": "#DC2626"},
-        {"nombre": "Ana Paula Torrico", "partido": "Unidad Nacional", "sigla": "UN", "color_hex": "#F59E0B"},
-    ]
-    procesos.append(ProcesoElectoral(
-        id_eleccion="PRES-2026-BO-01",
-        nombre="Elecciones Generales 2026 - Presidente y Diputados",
-        pais="Bolivia", tipo="nacional", fecha_eleccion="2026-10-18",
-        papeletas=[
-            Papeleta(nombre="Boleta Nacional", color_hex="#1E3A8A", orden=1, franjas=[
-                Franja(titulo="Presidente y Vicepresidente", tipo_voto="plancha_recta", color_franja="#EFF6FF",
-                       candidatos=[Candidato(**c) for c in presidenciales]),
-                Franja(titulo="Diputados Uninominales", tipo_voto="nominal", orden=1, color_franja="#FEF3C7",
-                       candidatos=[Candidato(**c) for c in diputados]),
-            ]),
-        ]
-    ).model_dump())
-
-    # --- Departamental: 1 boleta con 2 franjas (Gobernador + Asambleístas) ---
-    procesos.append(ProcesoElectoral(
-        id_eleccion="DEP-2026-BO-01",
-        nombre="Elecciones Departamentales 2026 - Gobernador y Asamblea",
-        pais="Bolivia", tipo="departamental", fecha_eleccion="2026-03-08",
-        papeletas=[
-            Papeleta(nombre="Boleta Gobernación", color_hex="#059669", orden=1, franjas=[
-                Franja(titulo="Gobernador y Vicegobernador", tipo_voto="plancha_recta", color_franja="#ECFDF5",
-                       candidatos=[
-                           Candidato(nombre="Santos Quispe Quispe", partido="Somos Pueblo", sigla="SP", color_hex="#0891B2"),
-                           Candidato(nombre="Franklin Flores", partido="MAS-IPSP", sigla="MAS", color_hex="#0EA5E9"),
-                       ]),
-                Franja(titulo="Asambleístas Departamentales", tipo_voto="lista", orden=1, color_franja="#F0FDF4",
-                       candidatos=[
-                           Candidato(nombre="Lista Somos Pueblo", sigla="SP", color_hex="#0891B2"),
-                           Candidato(nombre="Lista MAS-IPSP", sigla="MAS", color_hex="#0EA5E9"),
-                           Candidato(nombre="Lista Unidad Nacional", sigla="UN", color_hex="#F59E0B"),
-                       ]),
-            ]),
-        ]
-    ).model_dump())
-
-    # --- Municipal: 1 boleta con 2 franjas (Alcalde + Concejales) ---
-    procesos.append(ProcesoElectoral(
-        id_eleccion="MUN-2026-BO-01",
-        nombre="Elecciones Municipales 2026 - Alcalde y Concejales",
-        pais="Bolivia", tipo="municipal", fecha_eleccion="2026-03-08",
-        papeletas=[
-            Papeleta(nombre="Boleta Municipal", color_hex="#7C3AED", orden=1, franjas=[
-                Franja(titulo="Alcalde Municipal", tipo_voto="nominal", color_franja="#F5F3FF",
-                       candidatos=[
-                           Candidato(nombre="Iván Arias Durán", partido="Somos Pueblo", sigla="SP", color_hex="#0891B2"),
-                           Candidato(nombre="Eva Copa Murga", partido="Jallalla La Paz", sigla="JAP", color_hex="#16A34A"),
-                       ]),
-                Franja(titulo="Concejales Municipales", tipo_voto="lista", orden=1, color_franja="#FDF2F8",
-                       candidatos=[
-                           Candidato(nombre="Lista Somos Pueblo", sigla="SP", color_hex="#0891B2"),
-                           Candidato(nombre="Lista Jallalla", sigla="JAP", color_hex="#16A34A"),
-                       ]),
-            ]),
-        ]
-    ).model_dump())
-
-    # --- Universitaria: 3 boletas (Rectorado 2 franjas, Decanos, Directores) ---
-    procesos.append(ProcesoElectoral(
-        id_eleccion="UNIV-2026-BO-01",
-        nombre="Elecciones Universitarias 2026",
-        pais="Bolivia", tipo="universitaria", fecha_eleccion="2026-05-20",
-        papeletas=[
-            Papeleta(nombre="Boleta Rectorado", color_hex="#1E3A8A", orden=1, franjas=[
-                Franja(titulo="Rector", tipo_voto="estamentario", estamento="docentes, estudiantes", color_franja="#EFF6FF",
-                       candidatos=[
-                           Candidato(nombre="Dr. Vicente Cuellar", partido="Frente Académico", color_hex="#1E3A8A"),
-                           Candidato(nombre="Dra. Amalia Pando", partido="Renovación Universitaria", color_hex="#DC2626"),
-                       ]),
-                Franja(titulo="Vicerrector", tipo_voto="estamentario", estamento="docentes, estudiantes", orden=1, color_franja="#F5F3FF",
-                       candidatos=[
-                           Candidato(nombre="Ing. Carlos Rocabado", partido="Frente Académico", color_hex="#1E3A8A"),
-                           Candidato(nombre="Lic. Sofía Gutiérrez", partido="Renovación Universitaria", color_hex="#DC2626"),
-                       ]),
-            ]),
-            Papeleta(nombre="Boleta Decanaturas", color_hex="#059669", orden=2, franjas=[
-                Franja(titulo="Decano de Facultad", tipo_voto="estamentario", estamento="docentes", color_franja="#ECFDF5",
-                       candidatos=[
-                           Candidato(nombre="Dr. Hugo Fernández", color_hex="#059669"),
-                           Candidato(nombre="Dra. Patricia Molina", color_hex="#D97706"),
-                       ]),
-            ]),
-            Papeleta(nombre="Boleta Direcciones de Carrera", color_hex="#D97706", orden=3, franjas=[
-                Franja(titulo="Director de Carrera", tipo_voto="estamentario", estamento="docentes, estudiantes", color_franja="#FEF3C7",
-                       candidatos=[
-                           Candidato(nombre="MSc. Jorge Rojas", color_hex="#059669"),
-                           Candidato(nombre="Lic. Andrea Vargas", color_hex="#7C3AED"),
-                       ]),
-            ]),
-        ]
-    ).model_dump())
-
-    for p in procesos:
-        p["creado_en"] = p["creado_en"].isoformat()
-    await db.procesos_electorales.insert_many(procesos)
-    logger.info(f"Sembrados {len(procesos)} procesos electorales demo (estructura franjas)")
+    if not await db.usuarios.find_one({"email": correo_admin}):
+        usuario_admin = Usuario(
+            email=correo_admin,
+            nombre_completo="Administrador STRE",
+            rol="admin",
+        )
+        documento_admin = usuario_admin.model_dump()
+        documento_admin["hash_contrasena"] = hashear_contrasena(contrasena_admin)
+        documento_admin["creado_en"] = documento_admin["creado_en"].isoformat()
+        await db.usuarios.insert_one(documento_admin)
+        logger.info(f"Superusuario creado: {correo_admin}")
 
 @app.on_event("startup")
 async def al_iniciar():
@@ -3256,8 +3141,7 @@ async def al_iniciar():
     await db.sesiones_revocadas.create_index("expira_en", expireAfterSeconds=0)
     await db.intentos_login.create_index("email")
     await db.intentos_login.create_index("creado_en", expireAfterSeconds=900)
-    await seed_admin_y_operador()
-    await seed_procesos_demo()
+    await crear_superusuario()
     init_storage()
     logger.info("STRE backend listo")
 
