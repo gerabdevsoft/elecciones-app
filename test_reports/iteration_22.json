@@ -1,0 +1,38 @@
+{
+  "summary": "Iter22: frontend-only, non-destructive retest of the iter21 fixes in CentroComputoPage on UNIV-2026-BO-01, using admin and Borrador ánfora 1000. Every mutation was intercepted in Playwright and nothing was persisted. Of the 6 retest items, 5 pass. (1) Action bar: FAIL at 1536 and 1920px, PASS at 1280, 1440, 768 and 390px. The 2xl:grid-cols-4 breakpoint starts at 1536px, but the page is capped by max-w-[1600px] and the form panel is half the width, so each button still gets only about 163-171px. 'Consolidar y Bloquear' overflows: scrollWidth 171 > clientWidth 163 at 1536px, and 175 > 171 at 1920px. The screenshot at 1920px still shows 'Consolidar y Bloquea'. In the 2-column layout (1280 and 1440px) and the 1-column layout (390px) every button passes, and all buttons are 40px tall at every width. (2) Observar dialog: PASS. Cancel and Escape both clear the textarea on reopen. While the mocked POST /observar was delayed 4s, the button showed 'Enviando…', Cancel was disabled, and Escape and overlay clicks did not close the dialog. After the mocked success the dialog closed. (3) Header for the unlocked acta shows 'Borrador' (the raw key would be 'borrador'): PASS. (4) Unknown estado: PASS. With mocked responses the list badge shows 'revision externa' and the header shows 'estado desconocido x', not 'Sin datos'. (5) Refresh after mutations: PASS. After the mocked successes of observar, guardar-acta, enviar and bloquear, each one triggered a new GET /localizador-anforas. The Consolidar window.confirm appeared and was auto-accepted. Desbloquear was not exercised because the acta was never really locked. (6) No real writes: the only non-GET request let through was auth/login.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "barra-acciones-acta (2xl:grid-cols-4)",
+        "issue": "Labels are still clipped at 2xl. At 1536px and 1920px the 4-column grid leaves about 163-171px per button, and 'Consolidar y Bloquear' overflows (scrollWidth 171 > clientWidth 163 at 1536px, 175 > 171 at 1920px), showing as 'Consolidar y Bloquea'. Because the container is max-w-[1600px] and the panel is half-width, the panel never gets wider than about 700px, so no viewport fixes this.",
+        "selector": "[data-testid='acta-consolidate-block-button']",
+        "priority": "HIGH"
+      }
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {
+        "screen": "Global top nav (App.js) at 768px",
+        "issues": ["At 768px the document overflows horizontally: scrollWidth is 1153 against a viewport of 768. The nav links (nav-gestion, nav-asignaciones, nav-bitacora) do not wrap or collapse at tablet width. This is unrelated to the action bar."]
+      }
+    ]
+  },
+  "test_report_links": [],
+  "action_items": [
+    "Remove '2xl:grid-cols-4' from barra-acciones-acta and keep 'grid-cols-1 sm:grid-cols-2' at all widths. Alternatively shorten the label (e.g. 'Consolidar') or allow wrapping with whitespace-normal h-auto min-h-10. Then re-measure at 1536 and 1920px.",
+    "Optional: fix the top nav horizontal overflow at 768px in App.js (wrap or a hamburger menu)."
+  ],
+  "critical_code_review_comments": [
+    "In enviarValidacion, consolidarBloquear, confirmarObservacion and desbloquear, cargarLocalizador runs only after the follow-up GET /actas/{id} succeeds. If that GET fails after a successful POST, the user gets an error toast and the localizador is not refreshed, even though the mutation went through. Consider refreshing in a finally block, or separating the error handling.",
+    "Modal Desbloqueo does not clear motivoTextual on Cancel, and it is not guarded while the request is in flight. This is inconsistent with the Observar modal.",
+    "CentroComputoPage.jsx is 801 lines (over the 700-line guideline). Consider moving LocalizadorAnfora into its own file."
+  ],
+  "updated_files": ["/app/test_reports/iteration_22.json"],
+  "success_rate": {"backend": "N/A (skipped)", "frontend": "83% (5/6 items)"},
+  "test_credentials": "Admin gerabdevsoft@gmail.com / STRE_Admin_2026 (from /app/memory/test_credentials.md)",
+  "seed_data_creation": "None. All writes were mocked or aborted.",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Borrador ánfora 1000 has id f4805879-6644-4f04-a53a-1ea9fc43ef1d. Intercept every non-GET /api request except /auth/login. Fulfil guardar-acta, enviar, observar and bloquear with 200 mocks, and count GET localizador-anforas requests to confirm the refresh. To test unknown estados, mock GET /actas? (estado) and GET localizador-anforas (estado_acta). Measure the 4 button testids at 1536 and 1920px: these are the widths that still fail."
+}

@@ -1,0 +1,37 @@
+{
+  "summary": "Iter19 read-only retest of the iter18 critical bug (500-acta cap) on UNIV-2026-BO-01 as admin. Backend: 5/5 pytest PASS. GET /api/actas?id_eleccion returns 1042 actas (more than 500, no _id), and that includes Ánfora 1. Filtering with id_anfora=35cb374a-... returns exactly 4 actas, all for that ánfora and all esta_bloqueada=true. An unknown id_anfora returns []. Without auth the call is rejected with 401/403. An operador asking for an unassigned ánfora gets 404. Frontend (Playwright, every non-login mutation aborted, mutation log empty): (4) PASS. At first load there is no estado badge, no form and no cabecera. (1) PASS for the final state. Selecting Ánfora 1 calls GET /actas?id_anfora (200, 4 actas), shows the 'Consolidada / Bloqueada' badge and the 'Acta consolidada' banner, disables all 4 count inputs, and disables Guardar, Enviar, Consolidar and Subir foto. (1) also has 2 issues: the counts shown are all 0 (see the conteos issue), and while the request is in flight (simulated 4s delay) the UI shows an EDITABLE form with an enabled Guardar button and the 'BORRADOR' badge. (3) PASS. With the id_anfora response held for 4s, changing the search, Nivel, Recinto or Mesa, or clicking Cambiar ánfora, never brings back the cabecera, form or badge once the late response arrives. (5) PASS: no POST/PUT/PATCH/DELETE was sent except login.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "GET /api/actas?id_anfora=", "issue": "Data: Ánfora 1 has 4 duplicate locked actas. The 3 newest (dbc61ecb, 7e13bd8c, 5f24c03c, estado=bloqueado) have conteos=[]. Only the oldest (1a8614c1, estado=None, esta_bloqueada=true) has real counts (85 votos válidos + 5 blancos in franja 2d9c34bd). These duplicates come from the pre-fix bug. Clean up or merge them (main agent decision; DB not modified by tester). Also consider a unique constraint or server-side guard so there is only one acta per (id_eleccion, id_anfora)."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "CentroComputoPage.seleccionarAnfora", "issue": "Transient editable draft. setAnforaSeleccionada(anfora) runs before the GET /actas?id_anfora call resolves. During that window actaActual=null, so esBloqueado=false and puedeEditar=true. The panel-formulario therefore renders editable inputs, an enabled Guardar (acta-enable-edit-button) and the 'BORRADOR' badge (estado-acta-operativa). Reproduced with a 4s delayed response: inputs_enabled=True, badge 'BORRADOR'. On a slow network a user can type and save, creating another duplicate acta. This violates the requirement 'never an editable draft form'. Fix: add a cargandoActa state set to true before the fetch. While loading, hide or disable the form and badge (and disable Guardar/Subir), and set it to false once the request finishes, only if it is still the current solicitud.", "selector": "[data-testid=panel-formulario], [data-testid=estado-acta-operativa], [data-testid=acta-enable-edit-button]", "priority": "HIGH"}
+    ],
+    "integration_issues": [
+      {"flow": "Load existing counts for a locked ánfora", "issue": "data.find(a => a.esta_bloqueada) picks the most recent locked acta (dbc61ecb), which has empty conteos. The UI therefore shows 0/0/0/0 instead of the real consolidated counts held in the older acta 1a8614c1. Expected 'conteos existentes' are not shown for Ánfora 1. Either clean up the duplicate data, or prefer a locked acta that has non-empty conteos (or the canonical one) and surface a warning when more than one acta exists for an ánfora.", "affected_selectors": ["franja-vote-input-*", "blancos-count-input-*", "nulos-count-input-*"]}
+    ],
+    "design_issues": []
+  },
+  "test_report_links": ["/app/backend/tests/test_actas_por_anfora_iter19.py", "/app/test_reports/pytest/pytest_iter19.xml"],
+  "action_items": [
+    "HIGH: Add a loading state in seleccionarAnfora so the form, badge, Guardar and Subir are hidden or disabled until the acta lookup finishes. Never render an editable 'borrador' while the request is pending.",
+    "Resolve the 4 duplicate locked actas for Ánfora 1 (3 have empty conteos). Choose the canonical acta with counts in the UI, or merge/clean the data.",
+    "Add a server-side guard in /guardar-acta against creating a new acta when one already exists, or is locked, for the same id_anfora (if not already present)."
+  ],
+  "critical_code_review_comments": [
+    "CentroComputoPage.jsx: the solicitudAnforaRef stale-response guard is correctly placed after the await, and limpiarSeleccionAnfora increments it. Verified working.",
+    "CentroComputoPage.jsx: cargarActas() still loads the whole list (1042 actas) on mount, but the `actas` state no longer appears to be needed for selection. Consider removing it to avoid the large payload.",
+    "server.py listar_actas: the limit was raised to 20000 with no pagination. This is fine at the current scale, but GET /actas?id_eleccion has no projection, so the payload grows linearly."
+  ],
+  "updated_files": ["/app/backend/tests/test_actas_por_anfora_iter19.py"],
+  "success_rate": {"backend": "100%", "frontend": "75%"},
+  "test_credentials": "Admin gerabdevsoft@gmail.com / STRE_Admin_2026 (login body uses 'contrasena', not 'password'). Operador operador@stre.bo / Operador_2026.",
+  "seed_data_creation": "None. Testing was read-only and all mutations were aborted.",
+  "retest_needed": true,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Ánfora 1 id 35cb374a-7974-4b5a-9cc1-e48977c1b535 is found by direct search '1'. To test race conditions, intercept /api/actas?...id_anfora= and add a 4s sleep. Nivel 'Sucre' has only 1 recinto; use 'Sede Sucre' to get multiple recintos and mesas. Radix Select does not fire onValueChange when re-selecting the same value. Keep tests read-only by aborting non-login POST/PUT/PATCH/DELETE.",
+  "rca of the issue": "The transient draft happens because anforaSeleccionada is set synchronously while actaActual is still null during the async fetch, and puedeEditar is derived from !actaActual?.esta_bloqueada. The zero counts come from duplicate actas created before the fix: the frontend prefers the newest locked acta, and that one has empty conteos."
+}

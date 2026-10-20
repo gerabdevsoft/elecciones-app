@@ -1,0 +1,153 @@
+{
+  "project_name": "Sistema de Transmisión y Auditoría de Resultados Electorales (STRE)",
+  "language_requirement": "SPANISH_MANDATORY",
+  "app_type": "hybrid_fullstack",
+  "archetype": "SWISS_HIGH_CONTRAST_TACTICAL_PRECISION",
+  "theme": "light_with_high_contrast_accents",
+  "color_palette": {
+    "background": {
+      "primary": "#F8FAFC",
+      "secondary": "#FFFFFF",
+      "card_surface": "#FFFFFF",
+      "subtle_accent": "#F1F5F9"
+    },
+    "text": {
+      "primary": "#0F172A",
+      "secondary": "#475569",
+      "muted": "#64748B",
+      "contrast_light": "#FFFFFF"
+    },
+    "brand_and_accents": {
+      "primary": "#1E3A8A",
+      "primary_hover": "#1E40AF",
+      "success_consolidated": "#059669",
+      "success_bg": "#ECFDF5",
+      "warning_pending": "#D97706",
+      "warning_bg": "#FEF3C7",
+      "danger_blocked": "#DC2626",
+      "danger_bg": "#FEF2F2",
+      "ocr_highlight": "#7C3AED",
+      "ocr_highlight_bg": "#F5F3FF"
+    },
+    "border_and_grid": {
+      "subtle": "#E2E8F0",
+      "strong": "#CBD5E1",
+      "active_focus": "#2563EB"
+    }
+  },
+  "typography": {
+    "headings_font": "Cabinet Grotesk, Outfit, sans-serif",
+    "body_font": "Inter, system-ui, sans-serif",
+    "data_font": "JetBrains Mono, IBM Plex Mono, monospace",
+    "hierarchy": {
+      "h1_hero": "text-3xl sm:text-4xl font-extrabold tracking-tight text-slate-900",
+      "h2_section": "text-xl sm:text-2xl font-bold tracking-tight text-slate-900",
+      "h3_card": "text-lg font-semibold text-slate-800",
+      "data_kpi": "font-mono text-2xl sm:text-3xl font-bold tracking-tight",
+      "badge_text": "text-xs font-semibold uppercase tracking-wider"
+    }
+  },
+  "layout_and_grids": {
+    "mode": "HIGH_DENSITY_ELECTORAL_SPLIT",
+    "split_view": {
+      "left_column": "w-full lg:w-1/2 bg-slate-900 rounded-lg overflow-hidden border border-slate-700 shadow-inner flex flex-col h-[700px]",
+      "right_column": "w-full lg:w-1/2 bg-white rounded-lg border border-slate-200 shadow-sm p-6 flex flex-col h-[700px] overflow-y-auto"
+    },
+    "dashboard_grid": "grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6",
+    "container_padding": "p-4 sm:p-6 lg:p-8 max-w-7xl mx-auto"
+  },
+  "components_specifications": {
+    "login_screen": {
+      "layout": "Centered secure card with electoral watermark pattern and institutional badge",
+      "elements": ["Logo Institucional STRE", "Selector de Rol (Digitador, Auditor, Administrador)", "Campos Usuario y Contraseña", "Indicador de Encriptación SHA-256", "Boton 'Iniciar Sesión'"],
+      "spanish_labels": {
+        "title": "Sistema de Transmisión Electorales",
+        "subtitle": "Centro de Cómputo y Auditoría de Actas",
+        "user": "Usuario de Red / Cédula",
+        "password": "Contraseña de Acceso",
+        "submit": "Acceder al Centro de Cómputo"
+      }
+    },
+    "context_selector": {
+      "description": "Post-auth sticky banner / selector for 'Proceso Electoral Activo' locking app context",
+      "spanish_labels": {
+        "label": "Proceso Electoral Activo:",
+        "options": [
+          "Elecciones Generales 2026 - Presidente y Diputados",
+          "Elecciones Subnacionales 2026 - Alcalde y Concejales",
+          "Elecciones Universitarias 2026 - Rector y Vicerrector"
+        ]
+      }
+    },
+    "acta_digitization_split_dashboard": {
+      "left_side_image_viewer": {
+        "features": ["Zoom in/out slider (+ - reset)", "Pan/drag controls", "OCR bounding box overlay toggle", "Rotación de imagen 90°", "Filtro de contraste para escrituras tenues"],
+        "status_overlay": "Insignia 'Acta Comprimida Client-Side' con hash SHA-256 de verificación"
+      },
+      "right_side_editable_form": {
+        "default_state": "Deshabilitado por seguridad con advertencia visible",
+        "action_buttons": ["Habilitar Edición (Modo Transcripción)", "Consolidar y Bloquear (Firma Digital)"],
+        "sections": {
+          "franja_superior": "Presidente/Vice, Alcalde u Oficial Mayor con fotografía e insignias de partido",
+          "franja_inferior": "Diputados, Concejales o Lista de Representantes con asignación de escaños proporcionales",
+          "control_totales": "Votos Válidos, Blancos, Nulos y Total Votantes en Mesa (Suma Automática con indicador de descuadre)"
+        }
+      }
+    },
+    "admin_audit_unblock_modal": {
+      "description": "Modal para desbloqueo de actas consolidadas con bitácora de auditoría obligatoria",
+      "required_fields": ["Motivo Textual Obligatorio (motivo_textual)", "Autorización con clave PIN de Administrador", "Nivel de Prioridad de Revisión"],
+      "spanish_labels": {
+        "title": "Solicitud de Desbloqueo de Acta Electoral",
+        "warning": "Esta acción quedará registrada permanentemente en la bitácora inmutable de auditoría.",
+        "reason_prompt": "Ingrese la justificación técnica o legal detallada para habilitar la edición:",
+        "confirm": "Confirmar Desbloqueo y Registrar Bitácora"
+      }
+    },
+    "tally_and_analytics_view": {
+      "metrics_cards": ["Muebles / Mesas Procesadas (%)", "Participación Ciudadana", "Votos Blancos (%)", "Votos Nulos (%)"],
+      "charts": "Barra de progreso de avance nacional/municipal + Distribución porcentual por candidatura con gráficos accesible de Recharts"
+    }
+  },
+  "testing_requirements": {
+    "test_id_rule": "EVERY clickable element, input, modal, badge, status text MUST have data-testid in kebab-case",
+    "key_test_ids": [
+      "login-username-input",
+      "login-password-input",
+      "login-submit-button",
+      "electoral-process-selector",
+      "acta-image-zoom-in",
+      "acta-image-zoom-out",
+      "acta-enable-edit-button",
+      "acta-consolidate-block-button",
+      "admin-unblock-trigger-button",
+      "audit-motivo-textual-input",
+      "audit-confirm-unblock-button",
+      "ocr-preview-button",
+      "franja-superior-vote-input",
+      "franja-inferior-vote-input",
+      "blancos-count-input",
+      "nulos-count-input",
+      "audit-log-table"
+    ]
+  },
+  "image_urls": [
+    {
+      "category": "elections_audit_sample",
+      "url": "https://images.unsplash.com/photo-1494172961521-33799ddd43a5?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA2MjJ8MHwxfHNlYXJjaHwxfHxlbGVjdGlvbnMlMjB2b3RpbmclMjBiYWxsb3QlMjBkb2N1bWVudCUyMHBhcGVyJTIwYXVkaXR8ZW58MHx8fHwxNzg5MTM0NDc0fDA&ixlib=rb-4.1.0&q=85",
+      "description": "Depósito oficial de acta y sobre electoral en urna de cómputo"
+    },
+    {
+      "category": "ballot_box",
+      "url": "https://images.unsplash.com/photo-1730808822974-b21a29d64055?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA2MjJ8MHwxfHNlYXJjaHwyfHxlbGVjdGlvbnMlMjB2b3RpbmclMjBiYWxsb3QlMjBkb2N1bWVudCUyMHBhcGVyJTIwYXVkaXR8ZW58MHx8fHwxNzg5MTM0NDc0fDA&ixlib=rb-4.1.0&q=85",
+      "description": "Urna electoral de acrílico transparente para auditoría pública"
+    }
+  ],
+  "instructions_to_main_agent": [
+    "Ensure all text rendered in the user interface is strictly in SPANISH (e.g. 'Estado del Acta', 'Centro de Cómputo', 'Mesa de Sufragio', 'Desbloquear con Justificación').",
+    "Implement the client-side compression simulation for uploaded actas photos along with an interactive canvas/zoom container on the left column.",
+    "Implement OCR text extraction preview overlay highlighting candidate values with confidence percentages.",
+    "Ensure input validation checks if (Votos Válidos + Blancos + Nulos) matches Total Papeletas Registradas and highlights discrepancies in red.",
+    "Ensure every form field, button, status badge, modal and table row contains explicit data-testid attributes for E2E testing."
+  ]
+}

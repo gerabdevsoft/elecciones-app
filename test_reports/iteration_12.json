@@ -1,0 +1,43 @@
+{
+  "summary": "Tested the demo USFX random results load for UNIV-2026-BO-01. Database checks were read-only, plus API and UI checks. 8 of 9 pytest checks passed. Counts are correct: 1038 actas have metadatos.demo_usfx_resultados=true, one per demo ánfora with no duplicates, and none exist for non-demo ánforas. 851 are bloqueado with esta_bloqueada=true and 187 are borrador with esta_bloqueada=false and no validator. Public and admin totals are 1040 / 852 / 188. Public, university and estado-resultados aggregates match a sum of only the blocked actas. Draft actas are absent from the public localizador (852 ánforas) and return 404 on /publico/actas. The second load call returned reutilizada=true with actas_existentes=1038. The SHA snapshot of actas, anforas_mesa, mesas_sufragio and procesos is identical before and after. CRITICAL DATA BUG: in the process, the 'Franja Vicerrector' (papeleta 'Boleta Vicerrector') has 0 candidates. All 519 Vicerrector demo actas (431 blocked, 88 drafts) therefore have votos_por_candidato={} and only 0-14 blancos/nulos. The candidate votes (80-350 per estudiante acta, 8-45 per docente acta) were silently dropped. The 519 Rector actas meet every requested rule: estudiante 514 actas in the 80-350 range, docente 5 actas in the 8-38 range, blank+null at most 5.9%, and only the 2 candidates of their own ballot. The UI confirms the problem: /resultados-publicos shows Franja Vicerrector with Base 0 and no winner for both estamentos, and the TREP detail of a Vicerrector acta shows only 'Blancos: 0 Nulos: 3'.",
+  "backend_issues": {
+    "critical": [
+      {"endpoint": "POST /api/admin/procesos/{id}/carga-demo-resultados-usfx", "issue": "The Vicerrector ballot franja has no candidates. _repartir_votos_aleatorios(validos, 0) returns [total], but the dict comprehension over 0 candidates produces {}, so the valid votes are lost without any error. 519/1038 demo actas (all Vicerrector) contain only blancos/nulos, and their totals are 0-14 instead of 80-350 / 8-45. The requested 'realistic' results are not met for half of the load.", "priority": "HIGH"}
+    ],
+    "minor": [
+      {"endpoint": "_repartir_votos_aleatorios", "issue": "When cantidad<=1 it returns [total] even when cantidad==0. The load should fail fast with a 409 error if a papeleta franja has no candidates."},
+      {"endpoint": "carga-demo-resultados-usfx", "issue": "The idempotency check is 'any acta exists for a demo ánfora', so a partial or bad load cannot be regenerated without a manual cleanup. The main agent needs a deliberate admin-only reset path to repair the Vicerrector data."},
+      {"endpoint": "_calcular_resultado_universitario", "issue": "Its query does not require id_anfora to be non-null, unlike _consolidado_publico and the localizador. Results are the same today, but the filters are inconsistent."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [
+      {"flow": "Resultados públicos / TREP Vicerrector", "issue": "Franja Vicerrector shows empty charts (Base 0) and acta details have no candidate rows. This is a consequence of the backend data bug.", "affected_selectors": ["[data-testid^='resultado-universitario-publico-']", "[data-testid='detalle-acta-publica']"]}
+    ],
+    "design_issues": [
+      {"screen": "/trep acta detail", "issues": ["The timestamp is shown as a raw ISO string (2026-10-16T20:05:30.749886+00:00) and should be formatted for the locale."]},
+      {"screen": "/resultados-publicos", "issues": ["The Decano and Vicerrector franjas with 0 candidates render empty chart axes. Show an empty-state message instead."]}
+    ]
+  },
+  "test_report_links": ["/app/backend/tests/test_demo_resultados_usfx_iter12.py", "/app/backend/tests/snapshot_actas.py", "/app/backend/tests/inspect_demo_actas.py", "/app/test_reports/pytest/pytest_iter12.xml"],
+  "action_items": [
+    "Add candidates to 'Franja Vicerrector' (papeleta 5555971b-...), or make the load create or require them.",
+    "Make carga-demo-resultados-usfx reject (409) any franja with 0 candidates, and fix _repartir_votos_aleatorios for cantidad==0.",
+    "Regenerate the 519 Vicerrector demo actas (only those with metadatos.demo_usfx_resultados=true) after the user authorizes it. The current idempotency blocks re-running the load.",
+    "Optional: format the TREP timestamp and add an empty state for franjas without candidates."
+  ],
+  "critical_code_review_comments": [
+    "server.py is 2926 lines and should be split into routers (admin demo, public, results).",
+    "Every franja in the demo acta gets the same blancos/nulos and the full participation. This is fine for 1-franja papeletas, but multi-franja papeletas would duplicate blancos across franjas.",
+    "The mesa/recinto lookups use mesas_por_id[...] without .get, so a dangling ánfora causes a KeyError (500) in the middle of the load. Inserts happen after the loop, so the load stays atomic."
+  ],
+  "updated_files": ["/app/backend/tests/test_demo_resultados_usfx_iter12.py", "/app/backend/tests/snapshot_actas.py", "/app/backend/tests/inspect_demo_actas.py"],
+  "success_rate": {"backend": "89% (8/9; failing check = Vicerrector actas without candidate votes)", "frontend": "Totals and draft exclusion are correct. Vicerrector display is empty because of the data bug."},
+  "test_credentials": "Admin gerabdevsoft@gmail.com / STRE_Admin_2026. The login body field is 'contrasena', not 'password'.",
+  "seed_data_creation": "None. The only write was the authorized second call to the load endpoint, which returned reutilizada=true and changed nothing (snapshot hashes unchanged: actas 17128e893f6eab5d, anforas_mesa 0202224fe694be42).",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "UNIV-2026-BO-01 has 1040 ánforas and 1042 actas (1038 demo + 2 pre-existing: 1 blocked, 1 pending). Papeletas: Boleta Rector (Franja Rector, 2 candidates: Eduardo Rivero Zurita, Erick Mita), Autoridades Facultativas (Decano, 0 candidates), Boleta Vicerrector (Franja Vicerrector, 0 candidates). Run pytest with '-n 0' if needed (pytest.ini adds xdist). Use snapshot_actas.py to verify data preservation.",
+  "rca of the issue": "Reproduce by running inspect_demo_actas.py: the Vicerrector franja has 0 candidates, and all 519 Vicerrector demo actas have empty votos_por_candidato. Root cause: carga_demo_resultados_usfx does not validate candidates per franja, and _repartir_votos_aleatorios(total, 0) returns [total], which is then mapped over an empty candidate list. Mitigation: configure the Vicerrector candidates, add validation, then regenerate only the demo Vicerrector actas with user authorization."
+}

@@ -1,0 +1,65 @@
+/.data/
+.replit
+replit.md
+replit.nix
+.config/
+start.sh
+
+# ==========================================
+# IDEs y Editores (Visual Studio / VS Code)
+# ==========================================
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.swp
+
+# ==========================================
+# Backend (Python / FastAPI)
+# ==========================================
+backend/venv/
+backend/.venv/
+backend/env/
+backend/__pycache__/
+backend/**/*.pyc
+backend/**/*.pyo
+backend/**/*.pyd
+backend/.pytest_cache/
+backend/.coverage
+backend/htmlcov/
+
+# Archivos de configuración local y secretos (¡No subas tus llaves!)
+backend/.env
+backend/local_settings.py
+
+# ==========================================
+# Frontend (React + Craco + Yarn)
+# ==========================================
+frontend/node_modules/
+frontend/.pnp/
+frontend/.pnp.js
+
+# Carpetas de construcción (Build)
+frontend/build/
+frontend/dist/
+
+# Logs de Yarn
+frontend/yarn-debug.log*
+frontend/yarn-error.log*
+frontend/yarn-rc.log*
+frontend/npm-debug.log*
+
+# Configuración local de React
+frontend/.env
+frontend/.env.local
+frontend/.env.development.local
+frontend/.env.test.local
+frontend/.env.production.local
+
+# ==========================================
+# Sistema Operativo
+# ==========================================
+.DS_Store
+Thumbs.db

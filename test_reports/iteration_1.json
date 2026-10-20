@@ -1,0 +1,37 @@
+{
+  "summary": "Full backend pytest suite (20/20 passed) and UI smoke covering: admin login + user/assignment creation, operator & validator scope via localizador-anforas (only 1 of 2 anforas visible), full acta lifecycle (draft → send → observe → correct → resend → lock), authorization/BOLA pentest (operator cannot block own acta, cannot read/write other anforas, non-admins blocked from admin endpoints), and public endpoints (locked acta is published and visible on TREP desktop and Resultados public mobile).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "ResultadosPublicosPage (desktop & mobile)", "issues": ["Recharts emits repeated console warnings 'The width(-1) and height(-1) of chart should be greater than 0' — the ResponsiveContainer parent has an initial 0 height during the first render. Non-blocking but noisy; add minHeight to the chart container."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/backend_test.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "Optional: wrap Recharts ResponsiveContainer with explicit minHeight to silence width/height(-1) warnings on resultados-publicos.",
+    "Optional: consider returning 403 (instead of 404) when a non-admin targets an anfora outside their scope on write/block endpoints, so BOLA errors are explicit; the current 404-leak-minimization behaviour is actually correct security practice (hides existence) and tests accept both."
+  ],
+  "critical_code_review_comments": [
+    "server.py is 2442 lines — split into routers (auth, admin, operacion, publico, estructura, resultados) for maintainability.",
+    "_autorizar_anfora_operativa correctly enforces: (a) scope by nodos/recintos/anforas, (b) function-specific filtering (carga vs validacion), (c) author-cannot-validate rule across id_creador/id_operador/id_enviado_por. Logic is sound.",
+    "Public endpoint /publico/procesos/{id}/actas/{id_anfora} only returns 'esta_bloqueada=True' acts — correct policy.",
+    "guardar-acta transitions 'observado'→'borrador' only when editor is not a validator — correct and well-tested.",
+    "crear_usuario_operativo hashes with bcrypt via hashear_contrasena (gensalt + checkpw), tokens are JWT HS256 with 12h expiry — standard; consider rotating JWT_SECRET out of default-dev-secret-change-me in prod.",
+    "No brute-force lockout on /auth/login — not strictly required by the request but should be considered."
+  ],
+  "updated_files": [
+    "/app/backend/tests/backend_test.py (new)"
+  ],
+  "success_rate": {"backend": "100% (20/20)", "frontend": "100% (smoke: operator login + scope UI + public desktop + public mobile)"},
+  "test_credentials": "Admin gerabdevsoft@gmail.com/STRE_Admin_2026; Operador operador@stre.bo/Operador_2026; Validador validador@stre.bo/Validador_2026 — all working.",
+  "seed_data_creation": "Created ONE scoped carga assignment for operador and ONE scoped validacion assignment for validador over anforas[0] of the UNIV-2026-BO-01 election (acumulables, no bulk reset). Produced one acta (draft→enviado→observado→enviado→bloqueado) on that anfora. Second anfora deliberately left outside scope to prove BOLA isolation. No existing data was altered.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Backend tests live at /app/backend/tests/backend_test.py; they are idempotent (clear only operador/validador assignments then recreate). The test picks the first election with ≥2 anforas via /api/procesos + /api/procesos/{id}/anforas. The acta persists after the suite with estado=bloqueado on anforas[0]; subsequent runs will create new draft→... cycles using the same anfora. All data-testid required by Centro Computo (seleccionar-anfora-{id}, enviar-validacion-button, acta-consolidate-block-button, observar-acta-button, etc.) are present. Login route is /acceso, not /.",
+  "rca of the issue": "No functional issues found. All 20 pytest assertions passed including authorization pentests (BOLA/IDOR, self-validate/self-block prevention, admin-only guards). Public pages render on both desktop and mobile with the locked acta exposed as expected."
+}

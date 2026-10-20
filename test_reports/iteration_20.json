@@ -1,0 +1,35 @@
+{
+  "summary": "Iter20 retest of iter19 fixes on UNIV-2026-BO-01 as admin. Everything requested passed, and no data was modified. Backend pytest: 10/10 PASS (5 new iter20 tests plus 5 iter19 regression tests). (1) PASS: with GET /actas?id_anfora delayed by 4s, the UI at T+0.5s and T+2s shows only the cabecera. There is no panel-formulario, no estado-acta-operativa or estado-bloqueado badge, and none of the Guardar, Subir, Consolidar or Enviar buttons are rendered. (2) PASS: after the response arrives, Ánfora 1 shows the 'Consolidada / Bloqueada' badge and the 'Acta consolidada' banner, Franja Rector (2d9c34bd) shows 50+35=85 válidos, 5 blancos and 0 nulos, and all inputs and buttons are disabled. These counts come from canonical acta 1a8614c1, which is tipo_mesa=estudiante. (3) PASS: /api/publico/procesos/{id}/resultados, /api/resumen/{id} and /api/procesos/{id}/resultado-universitario exactly match an independent recomputation that dedups by ánfora and prefers real counts, locked status, then newest. Ánfora 1 adds +85 válidos and +5 blancos to franja 2d9c34bd. (4) PASS: POST /guardar-acta with an existing id_anfora and no id_acta returns 409 'Ya existe un acta bloqueada para esta ánfora'. The set of acta ids for Ánfora 1 is unchanged (still 4). (5) PASS: clicking Cambiar ánfora, or changing the búsqueda directa, during the 4s delay stops the late response from bringing back the cabecera, form or badge. Apart from the single permitted duplicate-POST check, no other mutations were sent: Playwright aborted all non-login writes, and its log was empty.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "POST /api/guardar-acta", "issue": "The duplicate guard is check-then-insert (find_one, then insert_one) with no unique index on (id_eleccion, id_anfora). Two concurrent requests could still both pass the check and create duplicates. A unique (partial) index cannot be added until the legacy duplicates are cleaned up. As an alternative, use an atomic upsert with $setOnInsert."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Centro de Cómputo - loading acta", "issues": ["During the acta lookup, the area under the cabecera is blank, with no spinner or 'Cargando acta…' text. On slow networks users get no feedback. Consider adding a small loading indicator."]}
+    ]
+  },
+  "test_report_links": ["/app/backend/tests/test_acta_canonica_iter20.py", "/app/backend/tests/test_actas_por_anfora_iter19.py", "/app/test_reports/pytest/pytest_iter20.xml"],
+  "action_items": [
+    "Optional: make the /guardar-acta new-acta path atomic. Use an upsert with $setOnInsert, or add a unique partial index on (id_eleccion, id_anfora) after cleaning up the 3 empty legacy duplicates of Ánfora 1.",
+    "Optional: show a loading indicator while cargandoActa is true."
+  ],
+  "critical_code_review_comments": [
+    "server.py guardar_acta: the 409 guard is correct, but it is not atomic (TOCTOU race), and there is no unique index on actas(id_eleccion, id_anfora).",
+    "server.py resultados_publicos: 'escrutadas' counts distinct id_anfora on the raw list, which is consistent with the dedup. That is fine.",
+    "server.py _consolidado_publico and resultado-universitario: the projection omits esta_bloqueada and actualizado_en. Ties are therefore resolved by the sort order (newest first), and the conteos-first priority still works. That is acceptable.",
+    "CentroComputoPage.jsx: the cargandoActa and solicitudAnforaRef logic is correct. Stale responses are dropped before setCargandoActa(false), and limpiarSeleccionAnfora resets it."
+  ],
+  "updated_files": ["/app/backend/tests/test_acta_canonica_iter20.py"],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "test_credentials": "Admin gerabdevsoft@gmail.com / STRE_Admin_2026 (login body field 'contrasena'). The login UI is at /acceso, not /login.",
+  "seed_data_creation": "None. The only write was the duplicate POST /guardar-acta, which returned 409 and inserted nothing (verified).",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "The login page is /acceso. After login, click electoral-process-selector-UNIV-2026-BO-01, then go to /centro-computo. Fill buscar-numero-anfora with '1' and click seleccionar-anfora-35cb374a-7974-4b5a-9cc1-e48977c1b535. Ánfora 1 still has 4 locked actas, and the canonical one is 1a8614c1. Run pytest with '-n 0' to see print output (pytest.ini enables xdist).",
+  "rca of the issue": "The iter19 bugs are fixed. The transient draft is gone because cargandoActa now gates rendering and puedeEditar. The zero counts are gone because the frontend sort and the backend _actas_unicas_por_anfora both prefer actas with non-empty conteos."
+}

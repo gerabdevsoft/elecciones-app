@@ -1,0 +1,39 @@
+{
+  "summary": "Iter14 retest of the Vicerrector repair idempotency, the per-ánfora dedup of aggregates, and the empty chart state. Score: backend 2/5 pytest, frontend 100%. (1) FAIL, CRITICAL: the second repair call was NOT idempotent. It returned {ok:true, actas_vicerrector_reparadas:519} with no 'reutilizada' field and rewrote all 519 Vicerrector actas. actualizado_en changed for all 519, to 2026-10-16T20:14. The actas snapshot hash changed from 7814e010901d935b to 2c16888239264592. States were preserved (431 bloqueado with validator, 88 borrador). The aggregate Vicerrector votes are identical to iter13 (docentes 51/37, estudiantes 43683/43876) because the RNG is seeded and the read order is natural. (2) FAIL: dedup does not work in the public consolidado or in resultado-universitario. It PASSES in resumen (total_actas 852, sums match the manual dedup). (3) Rector/Vicerrector are non-zero. The public universitario equals the private one. However, Franja Rector estudiantes is inflated by exactly the stale Sep-28 duplicate acta (+50 / +35 / +5 blancos). API shows 43874/43644 blank 1812; expected 43824/43609 blank 1807. Public franja totals show 43911/43685/1813 vs expected 43861/43650/1808. (4) PASS: Decano (0 candidates) renders 2x [data-testid=grafica-sin-candidaturas] with no recharts inside those cards. (5) PASS: totals are 1040 / 852 / 188 in the API and the UI.",
+  "backend_issues": {
+    "critical": [
+      {"endpoint": "POST /api/admin/procesos/{id}/reparar-demo-vicerrector-usfx", "issue": "The idempotency guard never fires. The actas query projection is {_id:0, id:1, id_anfora:1} and does not include 'reparado_demo_usfx', so all(acta.get('reparado_demo_usfx')) is always False and the endpoint rewrites every acta on every call (server.py ~L1373-1384). Fix: add 'reparado_demo_usfx': 1 to the projection. This call already mutated actualizado_en on the 519 Vicerrector actas.", "priority": "CRITICAL"},
+      {"endpoint": "GET /api/publico/procesos/{id}/resultados (_consolidado_publico) and GET /api/procesos/{id}/resultado-universitario (_calcular_resultado_universitario)", "issue": "Dedup is a no-op. The projections are {_id:0, conteos:1} (~L1736) and {_id:0, tipo_mesa:1, conteos:1} (~L2651). They omit 'id_anfora', so _actas_unicas_por_anfora sees None and keeps every acta. The 4 blocked actas on ánfora 35cb374a… are all counted: the oldest (Sep-28, Rector 50/35, 5 blancos) is added even though the most recent one (Oct-14 16:14) has empty conteos. Fix: add 'id_anfora': 1 to both projections. resumen_eleccion works because it uses a full projection.", "priority": "HIGH"}
+    ],
+    "minor": [
+      {"endpoint": "reparar-demo-vicerrector-usfx", "issue": "The candidate-insertion block runs before the idempotency check. If a franja is empty and the actas are already flagged, it would insert candidates with new ids and then return reutilizada. The check should come first."},
+      {"endpoint": "resultados_publicos / estado_resultados", "issue": "escrutadas uses a set of id_anfora, which is correct. The 10 most recent actas in estado-resultados can still list duplicates of the same ánfora."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [
+      {"flow": "/resultados-publicos Franja Rector Estudiantes", "issue": "Shows the inflated 43874 / 43644 because of the backend dedup bug (expected 43824 / 43609).", "affected_selectors": ["[data-testid='resultado-estamento-publico-estudiantes']"]}
+    ],
+    "design_issues": []
+  },
+  "test_report_links": ["/app/backend/tests/test_dedup_idempotent_iter14.py", "/app/backend/tests/snapshot_actas.py", "/app/test_reports/pytest/pytest_iter14.xml"],
+  "action_items": [
+    "Add 'reparado_demo_usfx': 1 to the actas projection in reparar_demo_vicerrector_usfx. Move the idempotency check before any process update.",
+    "Add 'id_anfora': 1 to the projections in _consolidado_publico and _calcular_resultado_universitario. Then expected Franja Rector estudiantes = 43824 / 43609, blancos 1807, nulos 825.",
+    "Rerun /app/backend/tests/test_dedup_idempotent_iter14.py -n 0. After the projection fix, the repair call must return reutilizada=true and the snapshot hash must remain at the current baseline 2c16888239264592."
+  ],
+  "critical_code_review_comments": [
+    "The helper _actas_unicas_por_anfora silently relies on callers projecting id_anfora. It should raise or assert when the key is missing, or the dedup should move into an aggregation pipeline ($sort + $group by id_anfora).",
+    "The repair query has no sort, so its determinism depends on Mongo natural order.",
+    "server.py is about 3050 lines and should be split into routers."
+  ],
+  "updated_files": ["/app/backend/tests/test_dedup_idempotent_iter14.py"],
+  "success_rate": {"backend": "40% (2/5)", "frontend": "100% (empty state and totals OK; displayed Rector numbers are wrong only because of the backend bug)"},
+  "test_credentials": "Admin gerabdevsoft@gmail.com / STRE_Admin_2026 (login field 'contrasena').",
+  "seed_data_creation": "None created. Side effect: the single authorized repair call was non-idempotent because of the bug and rewrote actualizado_en on all 519 Vicerrector actas. Aggregate votes and states are unchanged versus iter13.",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "New actas snapshot baseline: 2c16888239264592 (anforas 0202224fe694be42, procesos 1870343a46956944). Vicerrector actas now have actualizado_en 2026-10-16T20:14, which is the container clock. Ánfora 35cb374a… has 4 blocked non-demo actas; the most recent (dbc61ecb, Oct-14 16:14) has empty conteos, so the correct dedup contribution is 0. Run pytest with '-n 0'. Do NOT call repair again until the projection fix is in.",
+  "rca of the issue": "Both bugs have the same root cause: Mongo projections omit the fields that the new guard/dedup logic reads. Repair: the projection lacks reparado_demo_usfx, so the guard is always False. Aggregates: the projection lacks id_anfora, so the dedup key is None and every acta is kept. Repro: call POST repair as admin and it returns no 'reutilizada'. GET public resultados: Rector estudiantes is 50/35/5 higher than the manual dedup."
+}

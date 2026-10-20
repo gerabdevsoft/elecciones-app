@@ -1,0 +1,24 @@
+{
+  "summary": "Iter15 retest of the iter14 projection fixes. Everything passes: backend pytest 9/9 and frontend 100%. (1) The Vicerrector repair returns {ok:true, reutilizada:true, actas_vicerrector_reparadas:519}. Snapshot hashes are identical before and after: actas 1042/2c16888239264592, anforas 0202224fe694be42, mesas 9727bf2cd33fbc0c, procesos 1870343a46956944. All 519 actualizado_en timestamps are unchanged. The repair was called twice (iter15 and iter14 tests) and neither call mutated anything. (2) Public consolidado and resultado-universitario now dedup by ánfora: 855 blocked actas become 852 unique, with 0 mismatches against manual dedup. Rector Estudiantes = 43824/43609, blancos 1807, nulos 825. The public universitario equals the private one. (3) Resumen interno is deduped: total_actas 852, 0 mismatches. Estado-resultados actas_recientes has 10 unique id_anfora and totals 1040/852/188. (4) Vicerrector is non-zero: public 43734/43913 overall; UI docentes 51/37, estudiantes 43683/43876. (5) The UI /resultados-publicos shows 1040/852/188, Rector est. 43824/43609 with base 87433, and Decano with 2x grafica-sin-candidaturas and no recharts. No error elements.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [{"screen": "/resultados-publicos header", "issues": ["Election Select trigger (250px) truncates name 'Elecciones Claustros Universitari…' - cosmetic"]}]
+  },
+  "test_report_links": ["/app/backend/tests/test_dedup_idempotent_iter15.py", "/app/backend/tests/test_dedup_idempotent_iter14.py", "/app/test_reports/pytest/pytest_iter15.xml"],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "_actas_unicas_por_anfora still depends on callers projecting id_anfora. It works now, but a missing-key assert or an aggregation $group would prevent regressions.",
+    "_calcular_resultado_universitario does not filter id_anfora $exists, unlike _consolidado_publico. Actas without an ánfora are counted without dedup. There is no impact on current data because public == private.",
+    "Dedup tie-break relies only on actualizado_en desc. Consider adding a secondary sort key (id) for determinism.",
+    "server.py is about 3050 lines and should be split into routers."
+  ],
+  "updated_files": ["/app/backend/tests/test_dedup_idempotent_iter15.py"],
+  "success_rate": {"backend": "100% (9/9)", "frontend": "100%"},
+  "test_credentials": "Admin gerabdevsoft@gmail.com / STRE_Admin_2026 (from /app/memory/test_credentials.md)",
+  "seed_data_creation": "None. Only the repair endpoint was called, which is proven non-mutating by hash and timestamps.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Baseline hashes for UNIV-2026-BO-01: actas 2c16888239264592 (1042 docs), anforas_mesa 0202224fe694be42, mesas 9727bf2cd33fbc0c, procesos 1870343a46956944 (run backend/tests/snapshot_actas.py). Dup ánfora 35cb374a… has 4 blocked actas. Expected values: Rector est 43824/43609 b1807 n825; Vicerrector doc 51/37, est 43683/43876."
+}

@@ -1,0 +1,33 @@
+{
+  "summary": "Validación read-only de la carga demo USFX en UNIV-2026-BO-01 (iter7). Backend 8/8 pytest PASS y frontend público verificado en navegador real sin errores JS. Totales confirmados: 16 facultades Sucre, 19 recintos (16 facultades + Derecho Histórico + Monteagudo + Muyupampa), 519 mesas demo, 1038 ánforas demo (1028 generales + 10 docentes). Derecho Histórico: exactamente 5 mesas tipo docente con 2 ánforas (Rector+Vicerrector) cada una = 10 ánforas docentes. Todas las mesas demo tienen exactamente 2 ánforas con nombres {Rector, Vicerrector}. Las papeletas 'Boleta Rector' y 'Boleta Vicerrector' existen con id_papeleta distintos y cada ánfora demo referencia únicamente la papeleta correspondiente (lista con un solo id). Total visible público: 1040 ánforas (1038 demo + 2 preexistentes) → consistente con el note del main agent. Páginas públicas /trep y /resultados-publicos cargan sin errores JS; /resultados-publicos muestra 'ÁNFORAS TOTALES: 1040' confirmando el total. No se modificó, borró ni regeneró ningún dato.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_demo_usfx_iter7.py",
+    "/app/test_reports/pytest/iter7_demo_usfx.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py:959-1006 _preparar_boletas_rector_vicerrector es idempotente: primero busca papeletas separadas Rector/Vicerrector; si solo existe una compartida, la separa en dos papeletas con id_papeleta distintos. Correcto para esta elección.",
+    "server.py:1024-1035 La carga demo es idempotente: si ya existen anforas con metadatos.demo_usfx=true, devuelve {reutilizada: True} sin regenerar. Esto garantiza no duplicar datos en reintentos. Verificado por test (los totales no crecen y el run previo registró facultades_sucre=16/anforas=1038).",
+    "server.py:1156-1173 agregar_mesas crea exactamente 2 ánforas por mesa (Rector id_papeleta=id_rector, Vicerrector id_papeleta=id_vicerrector). Cada ánfora lleva id_papeletas=[id_única] y metadatos.demo_usfx=true: cumple el requerimiento de independencia Rector/Vicerrector. Verificado por test_boletas_rector_vicerrector_independientes.",
+    "Observación menor (no bloquea): el endpoint carga-demo-usfx inserta todos los datos sin transacción; si fallara a mitad podría quedar estado parcial. Para esta elección ya se completó con éxito y es idempotente, así que no requiere acción."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_demo_usfx_iter7.py (nuevo)"
+  ],
+  "success_rate": {"backend": "100% (8/8)", "frontend": "100% (/trep y /resultados-publicos OK, 0 errores JS, total 1040 ánforas visible)"},
+  "test_credentials": "gerabdevsoft@gmail.com / STRE_Admin_2026 (campo API: 'contrasena', no 'password'). Guardado como referencia para la próxima iteración.",
+  "seed_data_creation": "Ninguna. Solo lecturas sobre datos previamente cargados.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "El endpoint POST /api/admin/procesos/{id}/carga-demo-usfx es idempotente (reutiliza si ya hay ánforas demo). Para validar la carga en el futuro usar: pytest /app/backend/tests/test_demo_usfx_iter7.py -v -o addopts=''. El endpoint de login usa el campo 'contrasena' (no 'password'). Totales esperados UNIV-2026-BO-01: 1038 ánforas demo + 2 preexistentes = 1040 visibles; 519 mesas demo; 19 recintos demo. Página /resultados-publicos muestra 'ÁNFORAS TOTALES: 1040'.",
+  "rca of the issue": "No aplica: no hay bug. La solicitud era validar la carga demo. Resultado: la carga coincide 1:1 con lo documentado por el main agent (facultades_sucre=16, recintos=19, mesas=519, anforas=1038, anforas_derecho_historico=10, anforas_generales=1028) y las dos ánforas Rector/Vicerrector por mesa están correctamente separadas con papeletas independientes."
+}

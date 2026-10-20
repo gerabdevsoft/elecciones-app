@@ -1,0 +1,49 @@
+{
+  "summary": "Validación de endurecimiento post-pentest (iter 5). Backend: 8/9 PASS en /app/backend/tests/test_sec_regression_iter5.py (1 skipped porque no hay actas con imagen en DB). Verificado: (1) /auth/logout revoca el JTI y reutilizar el mismo Bearer en /auth/me devuelve 401; (2) 5 credenciales inválidas sobre un email ficticio único producen 401 y el 6to intento 429 (TTL 15 min), sin bloquear al admin real; (3) regresión BOLA iter4 sigue cerrada (operador contra elección no asignada => 404) y flujo autorizado admin sigue 200; (4) WS /api/ws/resultados autentica por Sec-WebSocket-Protocol (cliente python conecta ok, y rechaza cuando no se envía token). Frontend: la URL WebSocket no contiene '?token=' (confirmado wss://.../api/ws/resultados/PRES-2026-BO-01 sin query). Centro de Cómputo descarga la imagen vía api.get(url, responseType:'blob') por lo que no hay '?token=' en DOM. HOWEVER: la conexión WS desde el navegador FALLA porque el backend hace websocket.accept() sin propagar el subprotocolo recibido; Chrome aborta el handshake con 'Sent non-empty Sec-WebSocket-Protocol header but no response was received' y la UI muestra 'DESCONECTADO'. Esto rompe la actualización en vivo de /resultados en todos los navegadores reales. Clientes no-browser (como `websockets` en Python) toleran el server sin eco de subprotocol, por eso el test de backend pasa.",
+  "backend_issues": {
+    "critical": [
+      {
+        "endpoint": "WS /api/ws/resultados/{id_eleccion}",
+        "issue": "El servidor lee el token del header Sec-WebSocket-Protocol pero NO lo retorna en el accept(). Starlette por defecto NO echa el subprotocolo, así que los navegadores (Chrome/Firefox) cierran el handshake con 'Sent non-empty Sec-WebSocket-Protocol header but no response was received'. En la UI /resultados queda permanentemente en 'DESCONECTADO' pese a que el token y la auth son correctos. Fix: en websocket_resultados usar `await websocket.accept(subprotocol=token)` (y refactorizar gestor_resultados_en_vivo.conectar para no re-aceptar, o pasarle el subprotocol).",
+        "priority": "HIGH"
+      }
+    ],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [
+      {
+        "flow": "/resultados live update (admin)",
+        "issue": "WebSocket cerrado por el navegador por falta de eco de subprotocolo en el handshake del backend. Badge 'DESCONECTADO' permanente. Los resultados no se actualizan en vivo.",
+        "affected_selectors": ["text=DESCONECTADO", "wss://.../api/ws/resultados/{id}"]
+      }
+    ],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_sec_regression_iter5.py",
+    "/app/test_reports/pytest/iter5_sec.xml"
+  ],
+  "action_items": [
+    "FIX HIGH: en /app/backend/server.py (websocket_resultados, L2190-2208) propagar el subprotocolo en el accept, p.ej.: separar la aceptación: tras validar el token hacer `await websocket.accept(subprotocol=token)` y modificar gestor_resultados_en_vivo.conectar para que acepte un WebSocket ya aceptado (saltar websocket.accept()). Alternativamente, extender el gestor para recibir subprotocol opcional.",
+    "Opcional: aplicar el mismo patrón defensivo a /api/ws/publico (no requiere subprotocol pero conviene unificar)."
+  ],
+  "critical_code_review_comments": [
+    "server.py:2191-2208 — Auth del WS está bien (lee token de Sec-WebSocket-Protocol, verifica revocación por JTI y rol), pero el accept() en gestor_resultados_en_vivo.conectar (L66) NO echa el subprotocolo. Esto rompe el canal en navegadores. Es la causa raíz del 'DESCONECTADO' observado en /resultados.",
+    "server.py:144-174 (crear_token + usuario_actual) — JTI emitido y revocación consultada contra db.sesiones_revocadas: verificado end-to-end (logout => 401 inmediato en /auth/me).",
+    "server.py:413-438 (login) — Rate limit por email+ventana de 15 min con TTL index en intentos_login funciona (6to intento 429). No se bloquean cuentas reales. Nota: el contador se incrementa SOLO al fallar credenciales, lo cual es correcto; el TTL de 15 min está garantizado por el índice expireAfterSeconds=900.",
+    "server.py:1080-1105 (servir_imagen) — Correcto: autenticación por header Authorization (no por query). El frontend (CentroComputoPage.jsx:75) consume vía api.get con blob, nunca inyecta ?token= en el DOM. No hay regresión aquí.",
+    "Recomendación: documentar en el handler WS que el cliente debe enviar el token como primer subprotocolo; además considerar escalar un error claro (log) cuando se recibe handshake WS sin subprotocolo tras el fix (hoy también sucede pero el close(1008) es apropiado)."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_sec_regression_iter5.py (nuevo)"
+  ],
+  "success_rate": {"backend": "100% (8/8 ejecutados; 1 skipped por data)", "frontend": "50% (WS imagen OK, WS resultados ROTO en navegador)"},
+  "test_credentials": "Usados tal cual del archivo /app/memory/test_credentials.md. No se modificaron.",
+  "seed_data_creation": "Ninguno. Email ficticio aleatorio por test (fake_<uuid>@noexiste.stre.bo) para rate limit, sin tocar usuarios reales.",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Para re-verificar tras el fix: cargar /resultados como admin tras bloquear contexto, confirmar que el badge pasa a 'CONECTADO' y que el frame del WS entrega eventos. Comando: `pytest /app/backend/tests/test_sec_regression_iter5.py -v`. El test test_websocket_resultados_acepta_token_via_subprotocol PASA aun con el bug porque usa el cliente python `websockets` que tolera no-eco de subprotocolo; para cubrir el escenario navegador tras el fix, se puede añadir un assert explícito contra `ws.subprotocol == token` usando `websockets.sync.client.connect`.",
+  "rca of the issue": "Causa raíz WS roto en navegador: el handler websocket_resultados valida el JWT desde el header `Sec-WebSocket-Protocol` pero delega el handshake a `gestor_resultados_en_vivo.conectar`, cuyo primer paso es `await websocket.accept()` SIN subprotocol. Según RFC 6455 §4.2.2, si el cliente envía un subprotocolo y el servidor NO lo echa en la respuesta, el navegador debe fallar la conexión. Chrome 120+/Firefox hacen cumplir esto y cierran con 1006. Mitigación: tras validar el token, llamar `await websocket.accept(subprotocol=token)` antes de agregar el WS al gestor; refactorizar `conectar` para omitir el accept cuando ya está aceptado (p.ej. agregar un parámetro `ya_aceptado=False`)."
+}

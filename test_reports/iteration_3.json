@@ -1,0 +1,32 @@
+{
+  "summary": "Regresión dirigida de seguridad post-fix de SEC-REGRESSION en POST /api/admin/usuarios-operativos. 4/4 tests PASS. Verificado con credenciales reales: (1) operador@stre.bo → 403, (2) validador@stre.bo → 403 con cargas útiles válidas (Pydantic pasa, por lo que la puerta de auth se ejerce realmente); (3) admin crea usuario x_retest_*@stre.bo correctamente (200 + id + email + nombre_completo coinciden) y es eliminado vía Mongo (no existe DELETE seguro expuesto para usuarios-operativos); (4) operador recibe un subconjunto estricto de ánforas en /api/procesos/UNIV-2026-BO-01/anforas respecto al admin — el filtrado de ámbito sigue operativo. Resultado global: PASS.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_sec_regression_iter3.py",
+    "/app/test_reports/pytest/iter3_sec.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py línea 793-806: `crear_usuario_operativo` ahora usa `admin: dict = Depends(requerir_admin)` (verificado en línea 796) y la variable local ya no es reasignada — fix de iteración 2 correctamente aplicado.",
+    "No existe un endpoint DELETE /api/admin/usuarios-operativos/{id} para limpieza segura; se usó borrado directo en Mongo filtrando por prefijo x_retest_. Considerar añadir uno para futuras pruebas (no bloqueante).",
+    "Resto del paquete /api/admin/* POST sigue requiriendo admin (verificado en iteración 2); el fix es puntual y no introdujo regresión en otros endpoints."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_sec_regression_iter3.py (nuevo, 4 tests específicos de esta regresión)"
+  ],
+  "success_rate": {"backend": "100% (4/4)", "frontend": "N/A (skipped per request)"},
+  "test_credentials": "Admin, operador y validador verificados — login OK en los 3 casos.",
+  "seed_data_creation": "Usuario de prueba x_retest_<uuid>@stre.bo creado por el admin durante el test; eliminado automáticamente al final del test vía Mongo (verificado: 0 docs x_retest_* residuales).",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Regresión cerrada. El nuevo archivo /app/backend/tests/test_sec_regression_iter3.py puede reusarse como smoke test de seguridad; se ejecuta con `pytest backend/tests/test_sec_regression_iter3.py -n 0`. No ejecuta OCR ni sube archivos. La suite más amplia de iteración 2 (/app/backend/tests/backend_test.py::TestSecurityRetest) sigue siendo la referencia para cobertura completa.",
+  "rca of the issue": "La regresión reportada en iteración 2 (uso de `Depends(usuario_actual)` en lugar de `Depends(requerir_admin)` en POST /api/admin/usuarios-operativos) está CORREGIDA. Verificación en caliente con tokens Bearer reales: operador y validador reciben 403 Forbidden antes de insertar en DB (no se filtran usuarios residuales en Mongo), admin sigue pudiendo crear usuarios operativos válidos con payload Pydantic-conforme. Caso de aislamiento de ámbito (lectura fuera de scope) también confirmado: operador ve subconjunto estricto de ánforas vs admin."
+}
