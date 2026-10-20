@@ -8,11 +8,22 @@ from datetime import timedelta
 from typing import Any
 
 from google.api_core.client_options import ClientOptions
+from google.api_core.exceptions import Forbidden
 from google.cloud import documentai, storage
 from google.oauth2 import service_account
 
 
 CONFIANZA_MINIMA_ENTIDAD = 0.90
+
+
+def _mensaje_error_almacenamiento_google(error: Exception) -> str:
+    if isinstance(error, Forbidden):
+        return (
+            "Google Cloud Storage denegó el acceso. Compruebe que la API esté "
+            "habilitada y que la cuenta de servicio tenga permisos "
+            "storage.objects.create y storage.objects.get en el bucket privado."
+        )
+    return "No se pudo guardar el acta en Google Cloud Storage"
 
 
 def _credenciales_google():

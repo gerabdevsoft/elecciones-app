@@ -1529,7 +1529,7 @@ async def procesar_ocr(
         url_temporal = await asyncio.to_thread(crear_url_temporal_google, ruta_final)
     except Exception as e:
         logger.error("No se pudo guardar el archivo en Google Cloud Storage (%s)", type(e).__name__)
-        raise HTTPException(503, "No se pudo guardar el acta en Google Cloud Storage")
+        raise HTTPException(503, _mensaje_error_almacenamiento_google(e))
 
     try:
         documento = await asyncio.to_thread(

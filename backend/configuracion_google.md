@@ -19,11 +19,14 @@ Secreto privado del backend:
 - `GOOGLE_CREDENCIALES_SERVICIO_JSON`: JSON completo de una cuenta de servicio.
   No debe ponerse en archivos, chat, código React ni variables `REACT_APP_*`.
 
-La cuenta necesita permiso para procesar documentos con Document AI y crear/leer
-objetos en el bucket. Mantener el bucket privado, sin acceso público. La firma se
-realiza en el backend con la clave de la cuenta de servicio; React no la recibe.
-Activar las API de Document AI y Cloud Storage en el proyecto y desplegar una
-versión del Custom Extractor antes de probar.
+La cuenta necesita permiso para procesar documentos con Document AI y, en el
+bucket, `storage.objects.create` y `storage.objects.get`. Puede concederlos con
+un rol personalizado limitado al bucket; no se necesita acceso público ni
+permisos para borrar objetos. Activar las API de Document AI y Cloud Storage en
+el proyecto y desplegar una versión del Custom Extractor antes de probar.
+
+La firma de las URL se realiza en el backend con la clave de la cuenta de
+servicio; React nunca la recibe.
 
 ## Etiquetas del Custom Extractor
 

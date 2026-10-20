@@ -3,6 +3,7 @@
 import unittest
 from unittest.mock import MagicMock, patch
 
+from google.api_core.exceptions import Forbidden
 from google.cloud import documentai
 
 from backend import servicios_google
@@ -102,6 +103,12 @@ class PruebasResultadosGoogle(unittest.TestCase):
         documento.entities[1].mention_text = "199"
         resultado = self.validar(documento)
         self.assertTrue(any("habilitados" in mensaje for mensaje in resultado["errores_validacion"]))
+
+    def test_explica_permisos_requeridos_si_gcs_deniega_acceso(self):
+        mensaje = servicios_google._mensaje_error_almacenamiento_google(Forbidden("acceso denegado"))
+        self.assertIn("storage.objects.create", mensaje)
+        self.assertIn("storage.objects.get", mensaje)
+        self.assertIn("bucket privado", mensaje)
 
     @patch.object(servicios_google, "_bucket_actas")
     def test_guarda_archivo_original_y_url_firmada_temporal(self, obtener_bucket):
