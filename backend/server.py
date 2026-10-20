@@ -11,12 +11,11 @@ import os
 import uuid
 import json
 import logging
-import base64
+import asyncio
 import re
 import random
 import bcrypt
 import jwt
-import requests
 from datetime import datetime, timezone, timedelta
 from typing import List, Optional, Literal, Any
 from fastapi import (
@@ -37,6 +36,23 @@ from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, Field, EmailStr, ConfigDict
 
+try:
+    from .servicios_google import (
+        crear_url_temporal_google,
+        descargar_archivo_google,
+        procesar_documento_google,
+        subir_archivo_google,
+        validar_y_mapear_resultados,
+    )
+except ImportError:
+    from servicios_google import (
+        crear_url_temporal_google,
+        descargar_archivo_google,
+        procesar_documento_google,
+        subir_archivo_google,
+        validar_y_mapear_resultados,
+    )
+
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("stre")
 
@@ -45,10 +61,6 @@ MONGO_URL = os.environ['MONGO_URL']
 DB_NAME = os.environ['DB_NAME']
 JWT_SECRET = os.environ["JWT_SECRET"]
 JWT_ALGO = 'HS256'
-EMERGENT_LLM_KEY = os.environ.get('EMERGENT_LLM_KEY', '')
-APP_NAME = os.environ.get('APP_NAME', 'stre-electoral')
-STORAGE_BASE = (os.environ.get("INTEGRATION_PROXY_URL") or "").strip().rstrip("/") or "https://integrations.emergentagent.com"
-STORAGE_URL = STORAGE_BASE + "/objstore/api/v1/storage"
 
 # ------------- DB -------------
 mongo_client = AsyncIOMotorClient(MONGO_URL)
@@ -89,53 +101,27 @@ class GestorResultadosEnVivo:
 
 gestor_resultados_en_vivo = GestorResultadosEnVivo()
 
-# ------------- Object Storage -------------
-_storage_key: Optional[str] = None
+# ------------- Almacenamiento y lectura de archivos -------------
+TAMANO_MAXIMO_ACTA = 20 * 1024 * 1024
 
-def init_storage(force: bool = False) -> Optional[str]:
-    global _storage_key
-    if _storage_key and not force:
-        return _storage_key
-    if not EMERGENT_LLM_KEY:
-        logger.warning("EMERGENT_LLM_KEY no configurada; almacenamiento deshabilitado")
-        return None
-    try:
-        r = requests.post(f"{STORAGE_URL}/init", json={"emergent_key": EMERGENT_LLM_KEY}, timeout=30)
-        r.raise_for_status()
-        _storage_key = r.json()["storage_key"]
-        logger.info("Almacenamiento inicializado correctamente")
-        return _storage_key
-    except Exception as e:
-        logger.error(f"Fallo inicialización storage: {e}")
-        return None
 
-def subir_objeto(ruta: str, datos: bytes, tipo_contenido: str) -> dict:
-    clave = init_storage()
-    if not clave:
-        raise HTTPException(500, "Almacenamiento no disponible")
-    r = requests.put(
-        f"{STORAGE_URL}/objects/{ruta}",
-        headers={"X-Storage-Key": clave, "Content-Type": tipo_contenido},
-        data=datos, timeout=120
-    )
-    if r.status_code == 404:
-        init_storage(force=True)
-        clave = _storage_key
-        r = requests.put(
-            f"{STORAGE_URL}/objects/{ruta}",
-            headers={"X-Storage-Key": clave, "Content-Type": tipo_contenido},
-            data=datos, timeout=120
-        )
-    r.raise_for_status()
-    return r.json()
+def _tipo_archivo_subido(nombre: str, contenido: bytes, permitir_pdf: bool = True) -> tuple[str, str]:
+    nombre = (nombre or "").lower()
+    if contenido.startswith(b"%PDF-") and permitir_pdf:
+        return "application/pdf", "pdf"
+    if contenido.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg", "jpg"
+    if contenido.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png", "png"
+    if len(contenido) >= 12 and contenido[:4] == b"RIFF" and contenido[8:12] == b"WEBP":
+        return "image/webp", "webp"
+    if permitir_pdf and nombre.endswith(".pdf"):
+        raise HTTPException(400, "El archivo no es un PDF válido")
+    raise HTTPException(400, "Formato no admitido. Use JPG, PNG, WEBP o PDF.")
 
-def obtener_objeto(ruta: str) -> tuple[bytes, str]:
-    clave = init_storage()
-    if not clave:
-        raise HTTPException(500, "Almacenamiento no disponible")
-    r = requests.get(f"{STORAGE_URL}/objects/{ruta}", headers={"X-Storage-Key": clave}, timeout=60)
-    r.raise_for_status()
-    return r.content, r.headers.get("Content-Type", "image/jpeg")
+
+def _url_imagen_de_ruta(ruta: Optional[str]) -> Optional[str]:
+    return f"/api/imagenes/{ruta}" if ruta else None
 
 # ------------- Auth Utils -------------
 def hashear_contrasena(pw: str) -> str:
@@ -659,8 +645,10 @@ async def guardar_acta(req: GuardarActaReq, usuario: dict = Depends(usuario_actu
             for key, value in contexto_anfora.items()
             if key in {"id_anfora", "id_mesa", "id_recinto", "tipo_mesa"}
         })
-        if req.url_imagen: update["url_imagen"] = req.url_imagen
-        if req.ruta_storage: update["ruta_storage"] = req.ruta_storage
+        ruta_imagen = req.ruta_storage or existente.get("ruta_storage")
+        if ruta_imagen:
+            update["ruta_storage"] = ruta_imagen
+            update["url_imagen"] = _url_imagen_de_ruta(ruta_imagen)
         await db.actas.update_one({"id": req.id_acta}, {"$set": update})
         return await db.actas.find_one({"id": req.id_acta}, {"_id": 0})
     # nueva
@@ -688,7 +676,8 @@ async def guardar_acta(req: GuardarActaReq, usuario: dict = Depends(usuario_actu
         id_mesa=contexto_anfora.get("id_mesa"),
         id_recinto=contexto_anfora.get("id_recinto"),
         tipo_mesa=contexto_anfora.get("tipo_mesa"),
-        url_imagen=req.url_imagen, ruta_storage=req.ruta_storage,
+        url_imagen=_url_imagen_de_ruta(req.ruta_storage),
+        ruta_storage=req.ruta_storage,
         conteos=req.conteos,
         id_operador=usuario["id"],
         id_creador=usuario["id"],
@@ -1467,7 +1456,7 @@ async def bitacora_global(admin: dict = Depends(requerir_admin)):
     salida.sort(key=lambda x: x.get("timestamp", ""), reverse=True)
     return salida
 
-# ------------- OCR con LLM -------------
+# ------------- OCR con Document AI -------------
 @api.post("/procesar-ocr")
 async def procesar_ocr(
     id_eleccion: str = Form(...),
@@ -1481,121 +1470,95 @@ async def procesar_ocr(
         raise HTTPException(404, "Proceso electoral no existe")
     await _autorizar_anfora_operativa(usuario, id_eleccion, id_anfora, "guardar")
 
-    contenido = await archivo.read()
+    contenido = await archivo.read(TAMANO_MAXIMO_ACTA + 1)
     if len(contenido) == 0:
         raise HTTPException(400, "Archivo vacío")
+    if len(contenido) > TAMANO_MAXIMO_ACTA:
+        raise HTTPException(413, "El archivo supera el límite de 20 MB")
+    tipo_mime, extension = _tipo_archivo_subido(archivo.filename or "", contenido)
 
-    # Guardar en Object Storage
-    ext = (archivo.filename or "acta.jpg").rsplit(".", 1)[-1].lower()
-    if ext not in ("jpg", "jpeg", "png", "webp"):
-        ext = "jpg"
-    ruta = f"{APP_NAME}/actas/{usuario['id']}/{uuid.uuid4()}.{ext}"
-    tipo_mime = f"image/{'jpeg' if ext=='jpg' else ext}"
+    anfora = await db.anforas_mesa.find_one(
+        {"id": id_anfora, "id_eleccion": id_eleccion},
+        {"_id": 0},
+    )
+    if not anfora:
+        raise HTTPException(404, "Ánfora no encontrada")
+    mesa = await db.mesas_sufragio.find_one(
+        {"id": anfora["id_mesa"], "id_eleccion": id_eleccion},
+        {"_id": 0},
+    )
+    if not mesa:
+        raise HTTPException(409, "No se encontró la mesa asociada al ánfora")
+
+    componente_eleccion = re.sub(r"[^a-zA-Z0-9_-]", "-", id_eleccion).strip("-")
+    componente_mesa = re.sub(r"[^a-zA-Z0-9_-]", "-", str(mesa["numero_mesa"])).strip("-")
+    componente_anfora = re.sub(r"[^a-zA-Z0-9_-]", "-", id_anfora).strip("-")
+    ruta = (
+        f"actas/{componente_eleccion}/mesa-{componente_mesa}-"
+        f"anfora-{componente_anfora}-{uuid.uuid4()}.{extension}"
+    )
     try:
-        result = subir_objeto(ruta, contenido, tipo_mime)
-        ruta_final = result["path"]
+        ruta_final = await asyncio.to_thread(
+            subir_archivo_google,
+            ruta,
+            contenido,
+            tipo_mime,
+        )
+        url_temporal = await asyncio.to_thread(crear_url_temporal_google, ruta_final)
     except Exception as e:
-        logger.error(f"Fallo subir imagen: {e}")
-        raise HTTPException(500, f"No se pudo almacenar la imagen: {e}")
+        logger.error("No se pudo guardar el archivo en Google Cloud Storage (%s)", type(e).__name__)
+        raise HTTPException(503, "No se pudo guardar el acta en Google Cloud Storage")
 
-    url_publica = f"/api/imagenes/{ruta_final}"
+    papeletas_asignadas = set(anfora.get("id_papeletas") or [])
+    franjas_esperadas = []
+    for papeleta in proc.get("papeletas", []):
+        if papeletas_asignadas and papeleta["id_papeleta"] not in papeletas_asignadas:
+            continue
+        if id_papeleta and papeleta["id_papeleta"] != id_papeleta:
+            continue
+        for franja in papeleta.get("franjas", []):
+            franjas_esperadas.append({
+                "id_papeleta": papeleta["id_papeleta"],
+                "nombre_papeleta": papeleta.get("nombre", ""),
+                "id_franja": franja["id_franja"],
+                "nombre_franja": franja["titulo"],
+                "candidatos": franja.get("candidatos", []),
+            })
+    if not franjas_esperadas:
+        raise HTTPException(409, "El ánfora no tiene franjas configuradas para procesar")
 
-    # OCR con emergentintegrations
-    ocr_data = {}
     try:
-        from emergentintegrations.llm.chat import LlmChat, UserMessage, ImageContent
-
-        # Estructura esperada: candidatos por FRANJA + blancos + nulos (recuento independiente)
-        franjas = []
-        for p in proc.get("papeletas", []):
-            if id_papeleta and p["id_papeleta"] != id_papeleta:
-                continue
-            for f in p.get("franjas", []):
-                franjas.append({**f, "nombre_papeleta": p.get("nombre", "")})
-
-        estructura_txt = json.dumps([
-            {
-                "id_franja": f["id_franja"],
-                "papeleta": f["nombre_papeleta"],
-                "titulo": f["titulo"],
-                "candidatos": [{"id": c["id_candidato"], "nombre": c["nombre"], "sigla": c.get("sigla")} for c in f.get("candidatos", [])],
-                "permite_blancos": f.get("permite_blancos", True),
-                "permite_nulos": f.get("permite_nulos", True),
-            }
-            for f in franjas
-        ], ensure_ascii=False)
-
-        sistema = (
-            "Extrae solo los dígitos manuscritos para los candidatos, votos blancos y nulos "
-            "que coincidan con la estructura de la elección activa. Si un número es ilegible, "
-            "devuelve null. No inventes datos. Responde SOLO con JSON válido con el formato: "
-            '{"conteos":[{"id_franja":"...","votos_por_candidato":{"id_candidato":numero_o_null},'
-            '"votos_blancos":numero_o_null,"votos_nulos":numero_o_null}]}. '
-            f"Estructura activa: {estructura_txt}"
+        documento = await asyncio.to_thread(
+            procesar_documento_google,
+            contenido,
+            tipo_mime,
         )
-
-        b64 = base64.b64encode(contenido).decode()
-        chat = LlmChat(
-            api_key=EMERGENT_LLM_KEY,
-            session_id=f"ocr-{uuid.uuid4()}",
-            system_message=sistema,
-        ).with_model("openai", "gpt-5.4-mini")
-
-        msg = UserMessage(
-            text="Procesa esta acta electoral y devuelve los conteos en JSON estricto.",
-            file_contents=[ImageContent(image_base64=b64)]
+        ocr_data = validar_y_mapear_resultados(
+            documento,
+            franjas_esperadas,
+            str(mesa["numero_mesa"]),
         )
-        respuesta_txt = ""
-        try:
-            respuesta = await chat.send_message(msg)
-            respuesta_txt = str(respuesta)
-        except AttributeError:
-            from emergentintegrations.llm.chat import TextDelta, StreamDone
-            async for ev in chat.stream_message(msg):
-                if isinstance(ev, TextDelta):
-                    respuesta_txt += ev.content
-                elif isinstance(ev, StreamDone):
-                    break
-
-        # Extraer JSON
-        txt = respuesta_txt.strip()
-        if "```" in txt:
-            partes = txt.split("```")
-            for p in partes:
-                p = p.strip()
-                if p.startswith("json"):
-                    p = p[4:].strip()
-                if p.startswith("{"):
-                    txt = p
-                    break
-        try:
-            ocr_data = json.loads(txt)
-        except Exception:
-            inicio = txt.find("{")
-            fin = txt.rfind("}")
-            if inicio >= 0 and fin > inicio:
-                try:
-                    ocr_data = json.loads(txt[inicio:fin+1])
-                except Exception:
-                    ocr_data = {"error": "Formato OCR inválido", "raw": respuesta_txt[:500]}
-            else:
-                ocr_data = {"error": "Sin JSON en respuesta OCR", "raw": respuesta_txt[:500]}
     except Exception as e:
-        logger.error(f"Error OCR LLM: {e}")
-        ocr_data = {"error": str(e), "conteos": []}
+        logger.error("Error al procesar el acta con Document AI (%s)", type(e).__name__)
+        ocr_data = {
+            "error": "Document AI no pudo procesar el acta. Revise la configuración y vuelva a intentarlo.",
+            "conteos": [],
+        }
 
     return {
-        "url_imagen": url_publica,
+        "url_imagen": _url_imagen_de_ruta(ruta_final),
+        "url_temporal": url_temporal,
         "ruta_storage": ruta_final,
+        "tipo_contenido": tipo_mime,
         "ocr": ocr_data,
     }
 
 @api.get("/imagenes/{path:path}")
 async def servir_imagen(path: str, authorization: Optional[str] = Header(None)):
-    if not path.startswith(f"{APP_NAME}/") or ".." in path.split("/"):
+    if ".." in path.split("/") or not path:
         raise HTTPException(404, "Imagen no encontrada")
     try:
-        if path.startswith(f"{APP_NAME}/actas/"):
+        if path.startswith("actas/") or path.startswith("stre-electoral/actas/"):
             acta = await db.actas.find_one({"ruta_storage": path}, {"_id": 0})
             if not acta:
                 raise HTTPException(404, "Imagen no encontrada")
@@ -1608,13 +1571,13 @@ async def servir_imagen(path: str, authorization: Optional[str] = Header(None)):
                     "guardar",
                     acta,
                 )
-        data, mime = obtener_objeto(path)
+        data, mime = await asyncio.to_thread(descargar_archivo_google, path)
         from fastapi import Response
         return Response(content=data, media_type=mime)
     except HTTPException:
         raise
     except Exception as e:
-        logger.warning("Imagen no disponible: %s", e)
+        logger.warning("Imagen no disponible en Google Cloud Storage (%s)", type(e).__name__)
         raise HTTPException(404, "Imagen no encontrada")
 
 # ------------- Resumen -------------
@@ -2167,14 +2130,28 @@ async def admin_listar_sorteos(admin: dict = Depends(requerir_admin)):
 
 @api.post("/admin/upload-imagen")
 async def admin_upload_imagen(archivo: UploadFile = File(...), tipo: str = Form("candidato"), admin: dict = Depends(requerir_admin)):
-    contenido = await archivo.read()
-    if len(contenido) == 0: raise HTTPException(400, "Archivo vacío")
-    ext = (archivo.filename or "img.jpg").rsplit(".", 1)[-1].lower()
-    if ext not in ("jpg", "jpeg", "png", "webp"): ext = "jpg"
-    ruta = f"{APP_NAME}/{tipo}s/{uuid.uuid4()}.{ext}"
-    tipo_mime = f"image/{'jpeg' if ext=='jpg' else ext}"
-    result = subir_objeto(ruta, contenido, tipo_mime)
-    return {"url": f"/api/imagenes/{result['path']}", "ruta_storage": result["path"]}
+    contenido = await archivo.read(TAMANO_MAXIMO_ACTA + 1)
+    if not contenido:
+        raise HTTPException(400, "Archivo vacío")
+    if len(contenido) > TAMANO_MAXIMO_ACTA:
+        raise HTTPException(413, "El archivo supera el límite de 20 MB")
+    tipo_mime, extension = _tipo_archivo_subido(archivo.filename or "", contenido, permitir_pdf=False)
+    tipo_seguro = re.sub(r"[^a-z0-9_-]", "", tipo.lower())[:32] or "imagen"
+    ruta = f"{tipo_seguro}s/{uuid.uuid4()}.{extension}"
+    try:
+        ruta_final = await asyncio.to_thread(
+            subir_archivo_google,
+            ruta,
+            contenido,
+            tipo_mime,
+        )
+    except Exception as e:
+        logger.error("No se pudo guardar la imagen administrativa en Google Cloud Storage (%s)", type(e).__name__)
+        raise HTTPException(503, "No se pudo guardar la imagen en Google Cloud Storage")
+    return {
+        "url": _url_imagen_de_ruta(ruta_final),
+        "ruta_storage": ruta_final,
+    }
 
 # ------------- Diseño independiente por boleta -------------
 class DisenoPapeletaReq(BaseModel):
@@ -3142,7 +3119,6 @@ async def al_iniciar():
     await db.intentos_login.create_index("email")
     await db.intentos_login.create_index("creado_en", expireAfterSeconds=900)
     await crear_superusuario()
-    init_storage()
     logger.info("STRE backend listo")
 
 @app.on_event("shutdown")

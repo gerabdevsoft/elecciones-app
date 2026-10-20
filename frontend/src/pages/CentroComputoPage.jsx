@@ -1,7 +1,6 @@
 import { useEffect, useState, useRef } from "react";
 import { api, formatearError } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
-import { comprimirImagenActa } from "@/lib/imageCompress";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -53,6 +52,8 @@ export default function CentroComputoPage() {
   const [actaActual, setActaActual] = useState(null);
   const [meta, setMeta] = useState({ departamento: "La Paz", ciudad: "La Paz", recinto: "", ambiente: "", numero_anfora: "" });
   const [urlImagen, setUrlImagen] = useState(null);
+  const [urlTemporal, setUrlTemporal] = useState(null);
+  const [tipoContenidoActa, setTipoContenidoActa] = useState(null);
   const [imagenSeguraBlob, setImagenSeguraBlob] = useState(null);
   const [rutaStorage, setRutaStorage] = useState(null);
   const [conteos, setConteos] = useState({});
@@ -84,13 +85,17 @@ export default function CentroComputoPage() {
     anforaSeleccionada?.id_papeletas?.includes(papeleta.id_papeleta)
   ));
   useEffect(() => {
-    if (!urlImagen) {
+    if (urlTemporal) {
+      setImagenSeguraBlob(urlTemporal);
+      return undefined;
+    }
+    if (!rutaStorage) {
       setImagenSeguraBlob(null);
       return undefined;
     }
     let urlTemporal = null;
     let activa = true;
-    api.get(urlImagen, { responseType: "blob" })
+    api.get(`/imagenes/${rutaStorage}`, { responseType: "blob" })
       .then(({ data }) => {
         urlTemporal = URL.createObjectURL(data);
         if (activa) setImagenSeguraBlob(urlTemporal);
@@ -102,7 +107,7 @@ export default function CentroComputoPage() {
       activa = false;
       if (urlTemporal) URL.revokeObjectURL(urlTemporal);
     };
-  }, [urlImagen]);
+  }, [urlImagen, rutaStorage, urlTemporal]);
   useEffect(() => {
     if (!procesoActivo) return;
     setConteos({});
@@ -176,6 +181,8 @@ export default function CentroComputoPage() {
     setAnforaSeleccionada(null);
     setActaActual(null);
     setUrlImagen(null);
+    setUrlTemporal(null);
+    setTipoContenidoActa(null);
     setRutaStorage(null);
     setConteos({});
     setOcrResumen(null);
@@ -188,7 +195,9 @@ export default function CentroComputoPage() {
   const cargarActa = (a, anfora = anforaSeleccionada) => {
     setActaActual(a);
     setUrlImagen(a.url_imagen);
+    setUrlTemporal(null);
     setRutaStorage(a.ruta_storage);
+    setTipoContenidoActa(a.ruta_storage?.toLowerCase().endsWith(".pdf") ? "application/pdf" : "image/jpeg");
     setMeta({
       departamento: a.departamento, ciudad: a.ciudad, recinto: a.recinto,
       ambiente: a.ambiente, numero_anfora: a.numero_anfora,
@@ -216,16 +225,22 @@ export default function CentroComputoPage() {
       toast.warning("Seleccione un ánfora antes de cargar un acta.");
       return;
     }
+    const esPdf = archivo.type === "application/pdf" || archivo.name?.toLowerCase().endsWith(".pdf");
+    const tiposImagenAdmitidos = ["image/jpeg", "image/png", "image/webp"];
+    if (!esPdf && !tiposImagenAdmitidos.includes(archivo.type)) {
+      toast.error("Seleccione una fotografía JPG, PNG, WEBP o un archivo PDF.");
+      return;
+    }
     try {
       setSubiendo(true);
-      toast.info("Comprimiendo acta a 1024×1024 escala grises…");
-      const comprimida = await comprimirImagenActa(archivo);
       const fd = new FormData();
       fd.append("id_eleccion", procesoActivo.id_eleccion);
       fd.append("id_anfora", anforaSeleccionada.id);
-      fd.append("archivo", comprimida);
+      fd.append("archivo", archivo);
       const { data } = await api.post("/procesar-ocr", fd, { headers: { "Content-Type": "multipart/form-data" } });
       setUrlImagen(data.url_imagen);
+      setUrlTemporal(data.url_temporal);
+      setTipoContenidoActa(data.tipo_contenido);
       setRutaStorage(data.ruta_storage);
       if (data.ocr?.conteos) {
         const nuevo = { ...conteos };
@@ -241,7 +256,11 @@ export default function CentroComputoPage() {
         setConteos(nuevo);
       }
       setOcrResumen(data.ocr);
-      toast.success("OCR completado. Revise los valores antes de consolidar.");
+      if (data.ocr?.error) {
+        toast.warning("El archivo se guardó, pero el OCR requiere revisión manual.");
+      } else {
+        toast.success("OCR completado. Revise los valores antes de consolidar.");
+      }
     } catch (e) {
       toast.error(formatearError(e?.response?.data?.detail) || "Fallo al procesar OCR");
     } finally { setSubiendo(false); }
@@ -259,6 +278,7 @@ export default function CentroComputoPage() {
       };
       const { data } = await api.post("/guardar-acta", payload);
       setActaActual(data);
+      setUrlTemporal(null);
       toast.success("Acta guardada (borrador).");
     } catch (e) {
       toast.error(formatearError(e?.response?.data?.detail) || "Error al guardar");
@@ -394,7 +414,7 @@ export default function CentroComputoPage() {
         <div className="bg-slate-900 rounded-xl border border-slate-800 shadow-inner flex flex-col h-[720px] overflow-hidden" data-testid="panel-imagen">
           <div className="p-3 border-b border-slate-800 flex items-center justify-between text-white">
             <div className="flex items-center gap-2 text-xs font-data uppercase tracking-widest">
-              <ScanLine className="w-4 h-4 text-[#7C3AED]" /> Acta escaneada · 1024×1024 · grises
+              <ScanLine className="w-4 h-4 text-[#7C3AED]" /> Acta original
             </div>
             <div className="flex items-center gap-1">
               <Button size="icon" variant="ghost" className="text-white hover:bg-white/10" onClick={() => setZoom((z) => Math.max(0.4, z - 0.2))} data-testid="acta-image-zoom-out"><ZoomOut className="w-4 h-4" /></Button>
@@ -405,7 +425,14 @@ export default function CentroComputoPage() {
             </div>
           </div>
           <div className="flex-1 overflow-auto acta-canvas flex items-center justify-center p-6 relative">
-            {imagenSeguraBlob ? (
+            {imagenSeguraBlob && tipoContenidoActa === "application/pdf" ? (
+              <iframe
+                src={imagenSeguraBlob}
+                title="Acta electoral en PDF"
+                className="h-full w-full border-0 bg-white"
+                data-testid="acta-pdf"
+              />
+            ) : imagenSeguraBlob ? (
               <img
                 src={imagenSeguraBlob}
                 alt="Acta electoral"
@@ -418,12 +445,12 @@ export default function CentroComputoPage() {
                 <ImageOff className="w-16 h-16 mx-auto mb-4 opacity-60" />
                 <div className="font-data text-xs uppercase tracking-widest">Sin acta cargada</div>
                 <Button className="mt-6 bg-[#7C3AED] hover:bg-[#6D28D9]" onClick={() => inputFile.current?.click()} disabled={subiendo || !puedeEditar} data-testid="subir-acta-btn">
-                  <Upload className="w-4 h-4 mr-2" /> {subiendo ? "Procesando…" : "Subir foto del acta"}
+                  <Upload className="w-4 h-4 mr-2" /> {subiendo ? "Procesando…" : "Subir acta"}
                 </Button>
-                <div className="text-[10px] font-data mt-3 text-slate-600">La imagen se comprime en el navegador antes de enviarse al servidor.</div>
+                <div className="text-[10px] font-data mt-3 text-slate-600">Se aceptan fotografías JPG, PNG, WEBP y documentos PDF. El original se conserva en Google Cloud Storage.</div>
               </div>
             )}
-            <input ref={inputFile} type="file" accept="image/*" hidden onChange={(e) => subirArchivo(e.target.files?.[0])} data-testid="input-acta-archivo" />
+            <input ref={inputFile} type="file" accept="image/jpeg,image/png,image/webp,application/pdf" hidden onChange={(e) => subirArchivo(e.target.files?.[0])} data-testid="input-acta-archivo" />
           </div>
           {urlImagen && (
             <div className="p-3 border-t border-slate-800 flex items-center justify-between text-xs text-slate-400 font-data">
