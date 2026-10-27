@@ -3,6 +3,7 @@
 .cache/
 .local/
 .agents/
+.pythonlibs/
 
 # Archivos generados por Replit, no necesarios en GitHub
 .replit

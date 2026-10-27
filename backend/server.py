@@ -16,7 +16,6 @@ import re
 import random
 import bcrypt
 import jwt
-import requests
 from datetime import datetime, timezone, timedelta
 from typing import List, Optional, Literal, Any
 from fastapi import (
@@ -47,8 +46,8 @@ JWT_SECRET = os.environ["JWT_SECRET"]
 JWT_ALGO = 'HS256'
 EMERGENT_LLM_KEY = os.environ.get('EMERGENT_LLM_KEY', '')
 APP_NAME = os.environ.get('APP_NAME', 'stre-electoral')
-STORAGE_BASE = (os.environ.get("INTEGRATION_PROXY_URL") or "").strip().rstrip("/") or "https://integrations.emergentagent.com"
-STORAGE_URL = STORAGE_BASE + "/objstore/api/v1/storage"
+GCS_BUCKET_NAME = os.environ.get("GCS_BUCKET_NAME", "").strip()
+GCS_SERVICE_ACCOUNT_JSON = os.environ.get("GCS_SERVICE_ACCOUNT_JSON", "")
 
 # ------------- DB -------------
 mongo_client = AsyncIOMotorClient(MONGO_URL)
@@ -89,53 +88,65 @@ class GestorResultadosEnVivo:
 
 gestor_resultados_en_vivo = GestorResultadosEnVivo()
 
-# ------------- Object Storage -------------
-_storage_key: Optional[str] = None
+# ------------- Almacenamiento en Google Cloud Storage -------------
+_gcs_bucket: Any = None
 
-def init_storage(force: bool = False) -> Optional[str]:
-    global _storage_key
-    if _storage_key and not force:
-        return _storage_key
-    if not EMERGENT_LLM_KEY:
-        logger.warning("EMERGENT_LLM_KEY no configurada; almacenamiento deshabilitado")
-        return None
+
+def obtener_bucket_gcs():
+    """Devuelve el bucket privado configurado usando la credencial del proyecto."""
+    global _gcs_bucket
+    if _gcs_bucket is not None:
+        return _gcs_bucket
+    if not GCS_BUCKET_NAME or not GCS_SERVICE_ACCOUNT_JSON:
+        raise HTTPException(
+            503,
+            "Configura GCS_BUCKET_NAME y GCS_SERVICE_ACCOUNT_JSON para almacenar imágenes.",
+        )
     try:
-        r = requests.post(f"{STORAGE_URL}/init", json={"emergent_key": EMERGENT_LLM_KEY}, timeout=30)
-        r.raise_for_status()
-        _storage_key = r.json()["storage_key"]
-        logger.info("Almacenamiento inicializado correctamente")
-        return _storage_key
+        from google.cloud import storage
+
+        datos_cuenta = json.loads(GCS_SERVICE_ACCOUNT_JSON)
+        cliente = storage.Client.from_service_account_info(datos_cuenta)
+        _gcs_bucket = cliente.bucket(GCS_BUCKET_NAME)
+        return _gcs_bucket
     except Exception as e:
-        logger.error(f"Fallo inicialización storage: {e}")
-        return None
+        logger.error("No se pudo configurar Google Cloud Storage: %s", type(e).__name__)
+        raise HTTPException(
+            503,
+            "No se pudo configurar el acceso al bucket de Google Cloud Storage.",
+        ) from e
 
 def subir_objeto(ruta: str, datos: bytes, tipo_contenido: str) -> dict:
-    clave = init_storage()
-    if not clave:
-        raise HTTPException(500, "Almacenamiento no disponible")
-    r = requests.put(
-        f"{STORAGE_URL}/objects/{ruta}",
-        headers={"X-Storage-Key": clave, "Content-Type": tipo_contenido},
-        data=datos, timeout=120
-    )
-    if r.status_code == 404:
-        init_storage(force=True)
-        clave = _storage_key
-        r = requests.put(
-            f"{STORAGE_URL}/objects/{ruta}",
-            headers={"X-Storage-Key": clave, "Content-Type": tipo_contenido},
-            data=datos, timeout=120
-        )
-    r.raise_for_status()
-    return r.json()
+    try:
+        blob = obtener_bucket_gcs().blob(ruta)
+        blob.upload_from_string(datos, content_type=tipo_contenido)
+        return {"path": ruta}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("No se pudo subir la imagen a Google Cloud Storage: %s", type(e).__name__)
+        raise HTTPException(
+            503,
+            "No se pudo guardar la imagen en el bucket de Google Cloud Storage.",
+        ) from e
 
 def obtener_objeto(ruta: str) -> tuple[bytes, str]:
-    clave = init_storage()
-    if not clave:
-        raise HTTPException(500, "Almacenamiento no disponible")
-    r = requests.get(f"{STORAGE_URL}/objects/{ruta}", headers={"X-Storage-Key": clave}, timeout=60)
-    r.raise_for_status()
-    return r.content, r.headers.get("Content-Type", "image/jpeg")
+    from google.api_core.exceptions import NotFound
+
+    try:
+        blob = obtener_bucket_gcs().blob(ruta)
+        blob.reload()
+        return blob.download_as_bytes(), blob.content_type or "image/jpeg"
+    except NotFound as e:
+        raise HTTPException(404, "Imagen no encontrada") from e
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("No se pudo leer la imagen de Google Cloud Storage: %s", type(e).__name__)
+        raise HTTPException(
+            503,
+            "No se pudo leer la imagen desde el bucket de Google Cloud Storage.",
+        ) from e
 
 # ------------- Auth Utils -------------
 def hashear_contrasena(pw: str) -> str:
@@ -3139,7 +3150,6 @@ async def al_iniciar():
     await db.intentos_login.create_index("creado_en", expireAfterSeconds=900)
     # El arranque conserva la creación del administrador y no carga procesos de demostración.
     await seed_admin_y_operador()
-    init_storage()
     logger.info("STRE backend listo")
 
 @app.on_event("shutdown")
