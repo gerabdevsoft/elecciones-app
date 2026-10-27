@@ -76,6 +76,9 @@ export default function CentroComputoPage() {
     etiqueta: String(claveEstadoActual).replaceAll("_", " "),
     clase: "bg-slate-100 text-slate-700",
   };
+  const tipoMesaSeleccionada = (localizador?.mesas || []).find(
+    (mesa) => mesa.id === anforaSeleccionada?.id_mesa,
+  )?.tipo_mesa;
   const [modalDesbloqueo, setModalDesbloqueo] = useState(false);
   const [motivoTextual, setMotivoTextual] = useState("");
   const [desbloqueando, setDesbloqueando] = useState(false);
@@ -464,7 +467,7 @@ export default function CentroComputoPage() {
               <span>Mesa {anforaSeleccionada.numero_mesa}</span>
               <span>·</span>
               <span>{anforaSeleccionada.nombre_recinto}</span>
-              {anforaSeleccionada.tipo_mesa && <><span>·</span><span>Mesa {anforaSeleccionada.tipo_mesa}</span></>}
+              {tipoMesaSeleccionada && <><span>·</span><span>Mesa {tipoMesaSeleccionada}</span></>}
             </div>
           </div>
 
@@ -832,7 +835,7 @@ function LocalizadorAnfora({
               </div>
               <div className="mt-2 text-sm">{anfora.nombre}</div>
               <div className="mt-2 text-[10px] font-data uppercase tracking-wider text-slate-500">Mesa {mesa?.numero_mesa || "—"} · {recinto?.nombre || "—"}</div>
-              {anfora.tipo_mesa && <div className="mt-1 text-[10px] font-data uppercase text-blue-700">Mesa {anfora.tipo_mesa}</div>}
+              {mesa?.tipo_mesa && <div className="mt-1 text-[10px] font-data uppercase text-blue-700">Mesa {mesa.tipo_mesa}</div>}
             </button>
           );
         })}

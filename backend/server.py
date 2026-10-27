@@ -638,6 +638,7 @@ class MesaSufragio(BaseModel):
     id_recinto: str
     numero_mesa: str                         # único dentro del recinto
     codigo: Optional[str] = None
+    tipo_mesa: Optional[Literal["docente", "estudiante"]] = None
     path_ancestros: List[dict] = []          # copia del linaje del recinto (para agregaciones)
     path_texto: str = ""
     metadatos: dict = Field(default_factory=dict)   # atributos flexibles clave-valor
@@ -842,12 +843,13 @@ async def _obtener_contexto_anfora(id_eleccion: str, id_anfora: Optional[str]) -
     )
     if not mesa or not recinto:
         raise HTTPException(409, "La estructura asociada al ánfora está incompleta")
+    mesa = (await _sincronizar_tipo_mesa_legado(id_eleccion, [mesa]))[0]
     return {
         "id_anfora": anfora["id"],
         "id_mesa": mesa["id"],
         "id_recinto": recinto["id"],
         "numero_anfora": anfora["numero_anfora"],
-        "tipo_mesa": anfora.get("tipo_mesa"),
+        "tipo_mesa": mesa.get("tipo_mesa"),
         "recinto": recinto["nombre"],
         "ambiente": f"Mesa {mesa['numero_mesa']}",
         "departamento": (mesa.get("path_ancestros") or [{}])[0].get("nombre_nodo", ""),
@@ -1402,6 +1404,7 @@ async def carga_demo_usfx(
                 "id_recinto": recinto["id"],
                 "numero_mesa": f"M-{numero:03d}",
                 "codigo": codigo,
+                "tipo_mesa": tipo_mesa,
                 "metadatos": {
                     "demo_usfx": True,
                     "facultad": recinto["nombre"],
@@ -1425,7 +1428,6 @@ async def carga_demo_usfx(
                     "nombre": nombre,
                     "id_papeletas": [id_papeleta],
                     "color_hex": color,
-                    "tipo_mesa": tipo_mesa,
                     "path_ancestros": recinto["path_ancestros"],
                     "metadatos": {"demo_usfx": True},
                     "creado_en": ahora,
@@ -1494,7 +1496,7 @@ async def carga_demo_resultados_usfx(
     papeletas = {papeleta["id_papeleta"]: papeleta for papeleta in proceso.get("papeletas", [])}
     mesas = await db.mesas_sufragio.find(
         {"id_eleccion": id_eleccion, "id": {"$in": list({anfora["id_mesa"] for anfora in anforas})}},
-        {"_id": 0, "id": 1, "numero_mesa": 1, "path_ancestros": 1},
+        {"_id": 0, "id": 1, "numero_mesa": 1, "tipo_mesa": 1, "path_ancestros": 1},
     ).to_list(20000)
     recintos = await db.recintos_electorales.find(
         {"id_eleccion": id_eleccion, "id": {"$in": list({anfora["id_recinto"] for anfora in anforas})}},
@@ -1511,7 +1513,8 @@ async def carga_demo_resultados_usfx(
         papeleta = papeletas.get((anfora.get("id_papeletas") or [""])[0])
         if not papeleta:
             raise HTTPException(409, "Ánfora demo sin papeleta válida")
-        es_docente = anfora.get("tipo_mesa") == "docente"
+        mesa = mesas_por_id[anfora["id_mesa"]]
+        es_docente = mesa.get("tipo_mesa") == "docente"
         participacion = generador.randint(8, 45) if es_docente else generador.randint(80, 350)
         blancos = generador.randint(0, max(1, participacion // 25))
         nulos = generador.randint(0, max(1, participacion // 50))
@@ -1535,7 +1538,6 @@ async def carga_demo_resultados_usfx(
                 "votos_nulos": nulos,
             })
         bloqueada = indice < int(len(anforas) * 0.82)
-        mesa = mesas_por_id[anfora["id_mesa"]]
         recinto = recintos_por_id[anfora["id_recinto"]]
         estado = "bloqueado" if bloqueada else "borrador"
         actas.append({
@@ -1549,7 +1551,7 @@ async def carga_demo_resultados_usfx(
             "id_anfora": anfora["id"],
             "id_mesa": mesa["id"],
             "id_recinto": recinto["id"],
-            "tipo_mesa": anfora.get("tipo_mesa"),
+            "tipo_mesa": mesa.get("tipo_mesa"),
             "url_imagen": None,
             "ruta_storage": None,
             "conteos": conteos,
@@ -1603,7 +1605,7 @@ async def reparar_demo_vicerrector_usfx(
             "metadatos.demo_usfx": True,
             "id_papeletas": papeleta_vice["id_papeleta"],
         },
-        {"_id": 0, "id": 1, "tipo_mesa": 1},
+        {"_id": 0, "id": 1, "id_mesa": 1},
     ).sort("id", 1).to_list(10000)
     if not anforas:
         raise HTTPException(409, "No hay ánforas demo de Vicerrector para reparar")
@@ -1640,7 +1642,15 @@ async def reparar_demo_vicerrector_usfx(
             {"id_eleccion": id_eleccion},
             {"$set": {"papeletas": papeletas}},
         )
-    tipo_por_anfora = {anfora["id"]: anfora.get("tipo_mesa") for anfora in anforas}
+    mesas = await db.mesas_sufragio.find(
+        {"id_eleccion": id_eleccion, "id": {"$in": list({anfora["id_mesa"] for anfora in anforas})}},
+        {"_id": 0, "id": 1, "tipo_mesa": 1},
+    ).to_list(10000)
+    mesas_por_id = {mesa["id"]: mesa for mesa in mesas}
+    tipo_por_anfora = {
+        anfora["id"]: mesas_por_id.get(anfora["id_mesa"], {}).get("tipo_mesa")
+        for anfora in anforas
+    }
     generador = random.Random(20260207)
     actualizaciones = 0
     for acta in actas:
@@ -1881,6 +1891,15 @@ async def estado_resultados(
         {"_id": 0},
     ).sort("actualizado_en", -1).to_list(20000)
     actas = _actas_unicas_por_anfora(actas)
+    mesas_recientes = await db.mesas_sufragio.find(
+        {
+            "id_eleccion": id_eleccion,
+            "id": {"$in": [acta.get("id_mesa") for acta in actas[:10] if acta.get("id_mesa")]},
+        },
+        {"_id": 0},
+    ).to_list(10)
+    mesas_recientes = await _sincronizar_tipo_mesa_legado(id_eleccion, mesas_recientes)
+    tipo_por_mesa = {mesa["id"]: mesa.get("tipo_mesa") for mesa in mesas_recientes}
     anforas_escrutadas = {acta["id_anfora"] for acta in actas if acta.get("id_anfora")}
     total_escrutadas = len(anforas_escrutadas)
     total_faltantes = max(0, total_anforas - total_escrutadas)
@@ -1893,7 +1912,7 @@ async def estado_resultados(
             "numero_anfora": acta.get("numero_anfora"),
             "recinto": acta.get("recinto"),
             "ambiente": acta.get("ambiente"),
-            "tipo_mesa": acta.get("tipo_mesa"),
+            "tipo_mesa": tipo_por_mesa.get(acta.get("id_mesa")),
             "actualizado_en": acta.get("actualizado_en"),
         })
     return {
@@ -2042,7 +2061,6 @@ async def localizador_publico_actas(id_eleccion: str):
             "id_recinto": 1,
             "numero_anfora": 1,
             "nombre": 1,
-            "tipo_mesa": 1,
             "path_ancestros": 1,
         },
     ).sort("numero_anfora", 1).to_list(20000)
@@ -2050,8 +2068,9 @@ async def localizador_publico_actas(id_eleccion: str):
     ids_recinto = list({anfora["id_recinto"] for anfora in anforas})
     mesas = await db.mesas_sufragio.find(
         {"id_eleccion": id_eleccion, "id": {"$in": ids_mesa}},
-        {"_id": 0, "id": 1, "id_recinto": 1, "numero_mesa": 1, "path_ancestros": 1},
+        {"_id": 0, "id": 1, "id_recinto": 1, "numero_mesa": 1, "tipo_mesa": 1, "path_ancestros": 1},
     ).to_list(20000)
+    mesas = await _sincronizar_tipo_mesa_legado(id_eleccion, mesas)
     recintos = await db.recintos_electorales.find(
         {"id_eleccion": id_eleccion, "id": {"$in": ids_recinto}},
         {"_id": 0, "id": 1, "id_nodo_padre": 1, "nombre": 1, "path_ancestros": 1},
@@ -2081,6 +2100,14 @@ async def acta_publica(id_eleccion: str, id_anfora: str):
     )
     if not proceso:
         raise HTTPException(404, "Elección pública no encontrada")
+    mesa = None
+    if acta.get("id_mesa"):
+        mesa = await db.mesas_sufragio.find_one(
+            {"id_eleccion": id_eleccion, "id": acta["id_mesa"]},
+            {"_id": 0},
+        )
+        if mesa:
+            mesa = (await _sincronizar_tipo_mesa_legado(id_eleccion, [mesa]))[0]
     franjas = {}
     for papeleta in proceso.get("papeletas", []):
         for franja in papeleta.get("franjas", []):
@@ -2106,7 +2133,7 @@ async def acta_publica(id_eleccion: str, id_anfora: str):
         "numero_anfora": acta.get("numero_anfora"),
         "recinto": acta.get("recinto"),
         "ambiente": acta.get("ambiente"),
-        "tipo_mesa": acta.get("tipo_mesa"),
+        "tipo_mesa": mesa.get("tipo_mesa") if mesa else None,
         "actualizado_en": acta.get("actualizado_en"),
         "imagen_url": acta.get("url_imagen"),
         "conteos": conteos,
@@ -2444,11 +2471,13 @@ class CrearMesaReq(BaseModel):
     id_recinto: str
     numero_mesa: str
     codigo: Optional[str] = None
+    tipo_mesa: Optional[Literal["docente", "estudiante"]] = None
     metadatos: dict = Field(default_factory=dict)
 
 class ActualizarMesaReq(BaseModel):
     numero_mesa: Optional[str] = None
     codigo: Optional[str] = None
+    tipo_mesa: Optional[Literal["docente", "estudiante"]] = None
     metadatos: Optional[dict] = None
 
 class CrearCampoMesaReq(BaseModel):
@@ -2465,6 +2494,74 @@ async def _validar_proceso(id_eleccion: str):
     if not p:
         raise HTTPException(404, "Proceso electoral no encontrado")
     return p
+
+
+async def _validar_tipo_mesa_mesa(id_eleccion: str, tipo_mesa: Optional[str]) -> bool:
+    proceso = await db.procesos_electorales.find_one(
+        {"id_eleccion": id_eleccion},
+        {"_id": 0, "tipo": 1},
+    )
+    if not proceso:
+        raise HTTPException(404, "Proceso electoral no encontrado")
+    es_universitaria = proceso.get("tipo") == "universitaria"
+    if es_universitaria and tipo_mesa not in {"docente", "estudiante"}:
+        raise HTTPException(
+            422,
+            "En elecciones universitarias, el tipo de mesa debe ser Docente o Estudiante.",
+        )
+    return es_universitaria
+
+
+async def _sincronizar_tipo_mesa_legado(id_eleccion: str, mesas: list[dict]) -> list[dict]:
+    """Migra clasificaciones antiguas de ánforas/actas a su mesa cuando no hay conflicto."""
+    if not mesas:
+        return mesas
+    proceso = await db.procesos_electorales.find_one(
+        {"id_eleccion": id_eleccion},
+        {"_id": 0, "tipo": 1},
+    )
+    if not proceso or proceso.get("tipo") != "universitaria":
+        return mesas
+
+    ids_mesa = [mesa["id"] for mesa in mesas]
+    anforas = await db.anforas_mesa.find(
+        {"id_eleccion": id_eleccion, "id_mesa": {"$in": ids_mesa}},
+        {"_id": 0, "id_mesa": 1, "tipo_mesa": 1},
+    ).to_list(20000)
+    actas = await db.actas.find(
+        {"id_eleccion": id_eleccion, "id_mesa": {"$in": ids_mesa}},
+        {"_id": 0, "id_mesa": 1, "tipo_mesa": 1},
+    ).to_list(20000)
+    valores_por_mesa: dict[str, set[str]] = {}
+    for registro in [*anforas, *actas]:
+        tipo = registro.get("tipo_mesa")
+        if tipo in {"docente", "estudiante"}:
+            valores_por_mesa.setdefault(registro["id_mesa"], set()).add(tipo)
+
+    mesas_resueltas = []
+    for mesa in mesas:
+        tipo_mesa = mesa.get("tipo_mesa")
+        if tipo_mesa not in {"docente", "estudiante"}:
+            valores_anteriores = valores_por_mesa.get(mesa["id"], set())
+            if len(valores_anteriores) != 1:
+                continue
+            tipo_mesa = next(iter(valores_anteriores))
+            await db.mesas_sufragio.update_one(
+                {"id": mesa["id"], "id_eleccion": id_eleccion},
+                {"$set": {"tipo_mesa": tipo_mesa}},
+            )
+            mesa["tipo_mesa"] = tipo_mesa
+        mesas_resueltas.append(mesa["id"])
+        await db.actas.update_many(
+            {"id_eleccion": id_eleccion, "id_mesa": mesa["id"]},
+            {"$set": {"tipo_mesa": tipo_mesa}},
+        )
+    if mesas_resueltas:
+        await db.anforas_mesa.update_many(
+            {"id_eleccion": id_eleccion, "id_mesa": {"$in": mesas_resueltas}},
+            {"$unset": {"tipo_mesa": ""}},
+        )
+    return mesas
 
 async def _armar_path_desde_padre(id_eleccion: str, id_padre: Optional[str]) -> tuple[list, str, int]:
     """Devuelve (path_ancestros, path_texto, profundidad) para un nuevo hijo del padre indicado."""
@@ -2786,6 +2883,7 @@ async def admin_eliminar_campo_mesa(id_eleccion: str, id_campo: str, admin: dict
 async def admin_crear_mesa(id_eleccion: str, req: CrearMesaReq, admin: dict = Depends(requerir_admin)):
     recinto = await db.recintos_electorales.find_one({"id": req.id_recinto, "id_eleccion": id_eleccion})
     if not recinto: raise HTTPException(400, "Recinto inexistente")
+    es_universitaria = await _validar_tipo_mesa_mesa(id_eleccion, req.tipo_mesa)
     await _validar_unico_en_eleccion(
         "mesas_sufragio",
         id_eleccion,
@@ -2801,7 +2899,9 @@ async def admin_crear_mesa(id_eleccion: str, req: CrearMesaReq, admin: dict = De
         raise HTTPException(422, f"Campos requeridos ausentes en metadatos: {', '.join(faltantes)}")
     mesa = MesaSufragio(
         id_eleccion=id_eleccion, id_recinto=req.id_recinto,
-        numero_mesa=numero_mesa, codigo=req.codigo, metadatos=req.metadatos,
+        numero_mesa=numero_mesa, codigo=req.codigo,
+        tipo_mesa=req.tipo_mesa if es_universitaria else None,
+        metadatos=req.metadatos,
         path_ancestros=recinto.get("path_ancestros", []),
         path_texto=recinto.get("path_texto", ""),
     )
@@ -2818,6 +2918,13 @@ async def admin_actualizar_mesa(id_eleccion: str, id_mesa: str, req: ActualizarM
     if not upd: raise HTTPException(400, "Nada que actualizar")
     actual = await db.mesas_sufragio.find_one({"id": id_mesa, "id_eleccion": id_eleccion}, {"_id": 0})
     if not actual: raise HTTPException(404, "Mesa no encontrada")
+    if await _validar_tipo_mesa_mesa(
+        id_eleccion,
+        upd.get("tipo_mesa", actual.get("tipo_mesa")),
+    ):
+        upd["tipo_mesa"] = upd.get("tipo_mesa", actual.get("tipo_mesa"))
+    else:
+        upd.pop("tipo_mesa", None)
     if "numero_mesa" in upd:
         upd["numero_mesa"] = str(upd["numero_mesa"]).strip()
         await _validar_unico_en_eleccion(
@@ -2830,6 +2937,15 @@ async def admin_actualizar_mesa(id_eleccion: str, id_mesa: str, req: ActualizarM
         )
         upd["numero_mesa_normalizado"] = _normalizar_valor_unico(upd["numero_mesa"])
     r = await db.mesas_sufragio.update_one({"id": id_mesa, "id_eleccion": id_eleccion}, {"$set": upd})
+    if "tipo_mesa" in upd:
+        await db.actas.update_many(
+            {"id_eleccion": id_eleccion, "id_mesa": id_mesa},
+            {"$set": {"tipo_mesa": upd["tipo_mesa"]}},
+        )
+        await db.anforas_mesa.update_many(
+            {"id_eleccion": id_eleccion, "id_mesa": id_mesa},
+            {"$unset": {"tipo_mesa": ""}},
+        )
     if "numero_mesa" in upd:
         await db.actas.update_many({"id_mesa": id_mesa}, {"$set": {"ambiente": f"Mesa {upd['numero_mesa']}"}})
     return {"ok": True}
@@ -2855,7 +2971,6 @@ class AnforaMesa(BaseModel):
     nombre: str
     id_papeletas: List[str] = []
     color_hex: Optional[str] = None
-    tipo_mesa: Optional[Literal["docente", "estudiante"]] = None
     path_ancestros: List[dict] = []
     path_texto: str = ""
     creado_en: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
@@ -2866,33 +2981,12 @@ class CrearAnforaReq(BaseModel):
     nombre: str
     id_papeletas: List[str] = []
     color_hex: Optional[str] = None
-    tipo_mesa: Optional[Literal["docente", "estudiante"]] = None
 
 class ActualizarAnforaReq(BaseModel):
     numero_anfora: Optional[str] = None
     nombre: Optional[str] = None
     id_papeletas: Optional[List[str]] = None
     color_hex: Optional[str] = None
-    tipo_mesa: Optional[Literal["docente", "estudiante"]] = None
-
-
-async def _validar_tipo_mesa_anfora(
-    id_eleccion: str,
-    tipo_mesa: Optional[str],
-) -> bool:
-    proceso = await db.procesos_electorales.find_one(
-        {"id_eleccion": id_eleccion},
-        {"_id": 0, "tipo": 1},
-    )
-    if not proceso:
-        raise HTTPException(404, "Proceso electoral no encontrado")
-    es_universitaria = proceso.get("tipo") == "universitaria"
-    if es_universitaria and tipo_mesa not in {"docente", "estudiante"}:
-        raise HTTPException(
-            422,
-            "En elecciones universitarias, el tipo de mesa debe ser Docente o Estudiante.",
-        )
-    return es_universitaria
 
 
 async def _validar_papeletas_unicas_por_mesa(id_eleccion: str, id_mesa: str, id_papeletas: list, id_anfora_excluir: Optional[str] = None):
@@ -2907,7 +3001,8 @@ async def _validar_papeletas_unicas_por_mesa(id_eleccion: str, id_mesa: str, id_
 async def admin_crear_anfora(id_eleccion: str, req: CrearAnforaReq, admin: dict = Depends(requerir_admin)):
     mesa = await db.mesas_sufragio.find_one({"id": req.id_mesa, "id_eleccion": id_eleccion})
     if not mesa: raise HTTPException(400, "Mesa inexistente")
-    es_universitaria = await _validar_tipo_mesa_anfora(id_eleccion, req.tipo_mesa)
+    mesa = (await _sincronizar_tipo_mesa_legado(id_eleccion, [mesa]))[0]
+    await _validar_tipo_mesa_mesa(id_eleccion, mesa.get("tipo_mesa"))
     await _validar_unico_en_eleccion(
         "anforas_mesa",
         id_eleccion,
@@ -2921,7 +3016,6 @@ async def admin_crear_anfora(id_eleccion: str, req: CrearAnforaReq, admin: dict 
         id_eleccion=id_eleccion, id_mesa=req.id_mesa, id_recinto=mesa["id_recinto"],
         numero_anfora=numero_anfora, nombre=req.nombre,
         id_papeletas=req.id_papeletas, color_hex=req.color_hex,
-        tipo_mesa=req.tipo_mesa if es_universitaria else None,
         path_ancestros=mesa.get("path_ancestros", []),
         path_texto=mesa.get("path_texto", ""),
     )
@@ -2949,10 +3043,6 @@ async def admin_actualizar_anfora(id_eleccion: str, id_anfora: str, req: Actuali
             id_anfora,
         )
         upd["numero_anfora_normalizado"] = _normalizar_valor_unico(upd["numero_anfora"])
-    tipo_mesa = upd.get("tipo_mesa", anf.get("tipo_mesa"))
-    es_universitaria = await _validar_tipo_mesa_anfora(id_eleccion, tipo_mesa)
-    if not es_universitaria:
-        upd.pop("tipo_mesa", None)
     if "id_papeletas" in upd:
         await _validar_papeletas_unicas_por_mesa(id_eleccion, anf["id_mesa"], upd["id_papeletas"], id_anfora)
     await db.anforas_mesa.update_one({"id": id_anfora}, {"$set": upd})
@@ -3024,6 +3114,10 @@ async def obtener_localizador_anforas(
         {"id_eleccion": id_eleccion, "id": {"$in": ids_mesa}},
         {"_id": 0},
     ).to_list(20000)
+    mesas = await _sincronizar_tipo_mesa_legado(id_eleccion, mesas)
+    tipo_por_mesa = {mesa["id"]: mesa.get("tipo_mesa") for mesa in mesas}
+    for anfora in anforas:
+        anfora["tipo_mesa"] = tipo_por_mesa.get(anfora.get("id_mesa"))
     ids_nodo = set()
     for recinto in recintos:
         ids_nodo.add(recinto.get("id_nodo_padre"))
@@ -3056,9 +3150,16 @@ async def _calcular_resultado_universitario(id_eleccion: str) -> dict:
             franjas[franja["id_franja"]] = franja
     actas = await db.actas.find(
         {"id_eleccion": id_eleccion, "esta_bloqueada": True},
-        {"_id": 0, "id_anfora": 1, "tipo_mesa": 1, "conteos": 1},
+        {"_id": 0, "id_anfora": 1, "id_mesa": 1, "tipo_mesa": 1, "conteos": 1},
     ).sort("actualizado_en", -1).to_list(20000)
     actas = _actas_unicas_por_anfora(actas)
+    ids_mesa = list({acta.get("id_mesa") for acta in actas if acta.get("id_mesa")})
+    mesas = await db.mesas_sufragio.find(
+        {"id_eleccion": id_eleccion, "id": {"$in": ids_mesa}},
+        {"_id": 0},
+    ).to_list(20000)
+    mesas = await _sincronizar_tipo_mesa_legado(id_eleccion, mesas)
+    tipo_por_mesa = {mesa["id"]: mesa.get("tipo_mesa") for mesa in mesas}
     resultados = {}
     for tipo_mesa in ("docente", "estudiante"):
         resultados[tipo_mesa] = {}
@@ -3077,7 +3178,7 @@ async def _calcular_resultado_universitario(id_eleccion: str) -> dict:
                 "votos_nulos": 0,
             }
     for acta in actas:
-        tipo_mesa = acta.get("tipo_mesa")
+        tipo_mesa = tipo_por_mesa.get(acta.get("id_mesa"))
         if tipo_mesa not in resultados:
             continue
         for conteo in acta.get("conteos", []):
@@ -3208,6 +3309,7 @@ async def listar_mesas(
                 k, v = par.split("=", 1)
                 q[f"metadatos.{k.strip()}"] = v.strip()
     mesas = await db.mesas_sufragio.find(q, {"_id": 0}).sort("numero_mesa", 1).to_list(20000)
+    mesas = await _sincronizar_tipo_mesa_legado(id_eleccion, mesas)
     return mesas
 
 @api.get("/procesos/{id_eleccion}/campos-mesa")

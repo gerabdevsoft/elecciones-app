@@ -187,7 +187,11 @@ export default function EstructuraElectoralPage() {
                 </button>
                 <Grid3x3 className="w-3.5 h-3.5 text-[#059669]" />
                 <div className="flex-1 min-w-0">
-                  <div className="text-sm font-medium">Mesa {m.numero_mesa} <span className="text-[10px] font-data text-slate-400">· {anforas.length} ánforas</span></div>
+                  <div className="text-sm font-medium">
+                    Mesa {m.numero_mesa}
+                    {m.tipo_mesa && <span className="ml-2 stre-badge bg-blue-50 text-blue-700">Mesa {m.tipo_mesa}</span>}
+                    <span className="text-[10px] font-data text-slate-400"> · {anforas.length} ánforas</span>
+                  </div>
                   <div className="text-[10px] font-data text-slate-500">
                     {Object.entries(m.metadatos || {}).map(([k, v]) => `${k}:${v}`).join(" · ") || "sin metadatos"}
                   </div>
@@ -211,14 +215,6 @@ export default function EstructuraElectoralPage() {
                     <div className="flex-1 min-w-0">
                       <div className="text-sm font-medium">
                         Ánfora {a.numero_anfora} · <span className="font-normal">{a.nombre}</span>
-                        {a.tipo_mesa && (
-                          <span
-                            className="ml-2 stre-badge bg-blue-50 text-blue-700"
-                            data-testid={`anfora-tipo-mesa-${a.id}`}
-                          >
-                            Mesa {a.tipo_mesa}
-                          </span>
-                        )}
                       </div>
                       <div className="text-[10px] font-data text-slate-500">
                         {papeletasNombres.length ? papeletasNombres.join(" + ") : "sin papeletas asignadas"}
@@ -320,14 +316,13 @@ export default function EstructuraElectoralPage() {
       {modalNodo && <ModalNodo id_eleccion={id_eleccion} data={modalNodo} onClose={() => setModalNodo(null)} onOk={() => { setModalNodo(null); cargar(); }} />}
       {modalRecinto && <ModalRecinto id_eleccion={id_eleccion} data={modalRecinto} onClose={() => setModalRecinto(null)} onOk={() => { setModalRecinto(null); cargar(); }} />}
       {modalCampo && <ModalCampoMesa id_eleccion={id_eleccion} data={modalCampo} onClose={() => setModalCampo(null)} onOk={() => { setModalCampo(null); cargar(); }} />}
-      {modalMesa && <ModalMesa id_eleccion={id_eleccion} data={modalMesa} campos={estructura.campos_mesa} onClose={() => setModalMesa(null)} onOk={(idR) => { setModalMesa(null); cargarMesas(idR); cargar(); }} />}
+      {modalMesa && <ModalMesa id_eleccion={id_eleccion} data={modalMesa} campos={estructura.campos_mesa} tipoEleccion={estructura.tipo} onClose={() => setModalMesa(null)} onOk={(idR) => { setModalMesa(null); cargarMesas(idR); cargar(); }} />}
       {modalAnfora && (
         <ModalAnfora
           id_eleccion={id_eleccion}
           data={modalAnfora}
           papeletas={estructura.papeletas || []}
           anforasMismaMesa={anforasDeMesa(modalAnfora.id_mesa)}
-          tipoEleccion={estructura.tipo}
           onClose={() => setModalAnfora(null)}
           onOk={() => {
             setModalAnfora(null);
@@ -344,7 +339,6 @@ function ModalAnfora({
   data,
   papeletas,
   anforasMismaMesa,
-  tipoEleccion,
   onClose,
   onOk,
 }) {
@@ -356,11 +350,9 @@ function ModalAnfora({
       nombre: "",
       id_papeletas: [],
       color_hex: "#D97706",
-      tipo_mesa: "",
     },
   );
   const [enviando, setEnviando] = useState(false);
-  const esUniversitaria = tipoEleccion === "universitaria";
   const usadasEnOtras = new Set(
     anforasMismaMesa.filter((a) => a.id !== (editar?.id)).flatMap((a) => a.id_papeletas || [])
   );
@@ -379,7 +371,6 @@ function ModalAnfora({
           nombre: form.nombre,
           id_papeletas: form.id_papeletas,
           color_hex: form.color_hex,
-          ...(esUniversitaria ? { tipo_mesa: form.tipo_mesa } : {}),
         });
       } else {
         await api.post(`/admin/procesos/${id_eleccion}/anforas`, form);
@@ -402,25 +393,6 @@ function ModalAnfora({
               <Input value={form.nombre} onChange={(e) => setForm({ ...form, nombre: e.target.value })} placeholder="Ánfora Presidencial" data-testid="input-nombre-anfora" />
             </div>
           </div>
-          {esUniversitaria && (
-            <div>
-              <Label className="text-xs uppercase tracking-widest">
-                Tipo de mesa <span className="text-red-500">*</span>
-              </Label>
-              <Select
-                value={form.tipo_mesa || ""}
-                onValueChange={(tipo_mesa) => setForm({ ...form, tipo_mesa })}
-              >
-                <SelectTrigger data-testid="select-tipo-mesa-anfora">
-                  <SelectValue placeholder="Seleccione Docente o Estudiante" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="docente">Docente</SelectItem>
-                  <SelectItem value="estudiante">Estudiante</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-          )}
           <div>
             <Label className="text-xs uppercase tracking-widest">Color de identificación</Label>
             <div className="flex gap-2">
@@ -459,8 +431,7 @@ function ModalAnfora({
             disabled={
               enviando ||
               !form.numero_anfora ||
-              !form.nombre ||
-              (esUniversitaria && !form.tipo_mesa)
+              !form.nombre
             }
             data-testid="btn-guardar-anfora"
           >
@@ -629,21 +600,26 @@ function ModalCampoMesa({ id_eleccion, data, onClose, onOk }) {
   );
 }
 
-function ModalMesa({ id_eleccion, data, campos, onClose, onOk }) {
+function ModalMesa({ id_eleccion, data, campos, tipoEleccion, onClose, onOk }) {
   const editar = data.editar;
   const idRec = data.id_recinto || editar?.id_recinto;
-  const [form, setForm] = useState(editar || { id_recinto: idRec, numero_mesa: "", codigo: "", metadatos: {} });
+  const [form, setForm] = useState(editar ? { ...editar, tipo_mesa: editar.tipo_mesa || "" } : { id_recinto: idRec, numero_mesa: "", codigo: "", tipo_mesa: "", metadatos: {} });
   const [enviando, setEnviando] = useState(false);
+  const esUniversitaria = tipoEleccion === "universitaria";
   const setMeta = (k, v) => setForm((f) => ({ ...f, metadatos: { ...f.metadatos, [k]: v } }));
   const guardar = async () => {
     setEnviando(true);
     try {
       if (editar) {
         await api.put(`/admin/procesos/${id_eleccion}/mesas/${editar.id}`, {
-          numero_mesa: form.numero_mesa, codigo: form.codigo, metadatos: form.metadatos
+          numero_mesa: form.numero_mesa, codigo: form.codigo, metadatos: form.metadatos,
+          ...(esUniversitaria ? { tipo_mesa: form.tipo_mesa } : {}),
         });
       } else {
-        await api.post(`/admin/procesos/${id_eleccion}/mesas`, form);
+        await api.post(`/admin/procesos/${id_eleccion}/mesas`, {
+          ...form,
+          ...(esUniversitaria ? { tipo_mesa: form.tipo_mesa } : {}),
+        });
       }
       toast.success(editar ? "Mesa actualizada" : "Mesa creada");
       onOk(idRec);
@@ -663,6 +639,25 @@ function ModalMesa({ id_eleccion, data, campos, onClose, onOk }) {
               <Input value={form.codigo || ""} onChange={(e) => setForm({ ...form, codigo: e.target.value })} className="font-data" />
             </div>
           </div>
+          {esUniversitaria && (
+            <div>
+              <Label className="text-xs uppercase tracking-widest">
+                Tipo de mesa <span className="text-red-500">*</span>
+              </Label>
+              <Select
+                value={form.tipo_mesa || ""}
+                onValueChange={(tipo_mesa) => setForm({ ...form, tipo_mesa })}
+              >
+                <SelectTrigger data-testid="select-tipo-mesa">
+                  <SelectValue placeholder="Seleccione Docente o Estudiante" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="docente">Docente</SelectItem>
+                  <SelectItem value="estudiante">Estudiante</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          )}
           {campos.length > 0 && (
             <div className="p-3 bg-slate-50 rounded-md space-y-3">
               <div className="text-[10px] font-data uppercase tracking-widest text-slate-500">Metadatos flexibles</div>
@@ -692,7 +687,7 @@ function ModalMesa({ id_eleccion, data, campos, onClose, onOk }) {
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>Cancelar</Button>
-          <Button onClick={guardar} disabled={enviando || !form.numero_mesa} data-testid="btn-guardar-mesa">Guardar</Button>
+          <Button onClick={guardar} disabled={enviando || !form.numero_mesa || (esUniversitaria && !form.tipo_mesa)} data-testid="btn-guardar-mesa">Guardar</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

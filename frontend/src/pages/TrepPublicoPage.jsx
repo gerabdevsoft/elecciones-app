@@ -184,7 +184,7 @@ export default function TrepPublicoPage() {
               {anforas.map((anfora) => {
                 const mesa = (localizador?.mesas || []).find((item) => item.id === anfora.id_mesa);
                 const recinto = (localizador?.recintos || []).find((item) => item.id === anfora.id_recinto);
-                return <button key={anfora.id} type="button" onClick={() => abrirActa(anfora)} className="w-full border border-slate-200 p-3 text-left hover:border-[#1E3A8A] hover:bg-blue-50" data-testid={`abrir-acta-publica-${anfora.id}`}><div className="font-data text-xs font-bold">Ánfora {anfora.numero_anfora}</div><div className="mt-1 text-sm font-semibold">{anfora.nombre}</div><div className="mt-1 text-xs text-slate-500">Mesa {mesa?.numero_mesa || "—"} · {recinto?.nombre || "—"}</div>{anfora.tipo_mesa && <div className="mt-1 text-[10px] font-data uppercase text-blue-700">Mesa {anfora.tipo_mesa}</div>}</button>;
+                return <button key={anfora.id} type="button" onClick={() => abrirActa(anfora)} className="w-full border border-slate-200 p-3 text-left hover:border-[#1E3A8A] hover:bg-blue-50" data-testid={`abrir-acta-publica-${anfora.id}`}><div className="font-data text-xs font-bold">Ánfora {anfora.numero_anfora}</div><div className="mt-1 text-sm font-semibold">{anfora.nombre}</div><div className="mt-1 text-xs text-slate-500">Mesa {mesa?.numero_mesa || "—"} · {recinto?.nombre || "—"}</div>{mesa?.tipo_mesa && <div className="mt-1 text-[10px] font-data uppercase text-blue-700">Mesa {mesa.tipo_mesa}</div>}</button>;
               })}
               {localizador && anforas.length === 0 && <div className="text-sm text-slate-400">No existen actas consolidadas con estos filtros.</div>}
             </div>
