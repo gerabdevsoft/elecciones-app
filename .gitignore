@@ -1,5 +1,13 @@
 /.data/
 .config/
+.cache/
+.local/
+.agents/
+
+# Archivos generados por Replit, no necesarios en GitHub
+.replit
+replit.md
+replit.nix
 
 # ==========================================
 # IDEs y Editores (Visual Studio / VS Code)
