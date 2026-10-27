@@ -241,7 +241,13 @@ export default function CentroComputoPage() {
         setConteos(nuevo);
       }
       setOcrResumen(data.ocr);
-      toast.success("OCR completado. Revise los valores antes de consolidar.");
+      if (data.ocr?.error) {
+        toast.warning("La imagen se guardó, pero falló el reconocimiento OCR.");
+      } else if (data.ocr?.conteos_detectados === 0) {
+        toast.warning("OCR completado. Revise el texto detectado y complete los votos.");
+      } else {
+        toast.success("OCR completado. Revise los valores antes de consolidar.");
+      }
     } catch (e) {
       toast.error(formatearError(e?.response?.data?.detail) || "Fallo al procesar OCR");
     } finally { setSubiendo(false); }
@@ -551,6 +557,34 @@ export default function CentroComputoPage() {
             <div className="mt-4 p-3 bg-amber-50 border border-amber-200 text-amber-800 text-xs rounded-md flex gap-2">
               <AlertTriangle className="w-4 h-4 shrink-0" /> OCR devolvió: {ocrResumen.error}
             </div>
+          )}
+          {ocrResumen?.aviso && (
+            <div className="mt-4 p-3 bg-amber-50 border border-amber-200 text-amber-800 text-xs rounded-md flex gap-2" data-testid="ocr-aviso">
+              <AlertTriangle className="w-4 h-4 shrink-0" /> {ocrResumen.aviso}
+            </div>
+          )}
+          {!!ocrResumen?.campos_detectados?.length && (
+            <details className="mt-4 rounded-md border border-slate-200 bg-white p-3 text-xs" data-testid="ocr-campos-detectados">
+              <summary className="cursor-pointer font-semibold text-slate-700">
+                Campos detectados por Document AI ({ocrResumen.campos_detectados.length})
+              </summary>
+              <ul className="mt-3 space-y-2">
+                {ocrResumen.campos_detectados.map((campo, indice) => (
+                  <li key={`${campo.nombre}-${indice}`} className="grid grid-cols-1 gap-1 border-t border-slate-100 pt-2 sm:grid-cols-2">
+                    <span className="font-medium text-slate-600">{campo.nombre || "Campo"}</span>
+                    <span className="font-data text-slate-800">{campo.valor || "Sin valor"}</span>
+                  </li>
+                ))}
+              </ul>
+            </details>
+          )}
+          {!!ocrResumen?.texto_detectado && (
+            <details className="mt-2 rounded-md border border-slate-200 bg-white p-3 text-xs" data-testid="ocr-texto-detectado">
+              <summary className="cursor-pointer font-semibold text-slate-700">Ver texto reconocido por Document AI</summary>
+              <pre className="mt-3 max-h-64 overflow-auto whitespace-pre-wrap break-words font-data text-slate-600">
+                {ocrResumen.texto_detectado}
+              </pre>
+            </details>
           )}
 
           <div className="mt-6 grid grid-cols-1 gap-2 border-t border-slate-200 pt-4 sm:grid-cols-2" data-testid="barra-acciones-acta">

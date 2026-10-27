@@ -269,7 +269,9 @@ def _extraer_conteos_document_ai(documento: dict, franjas: list[dict]) -> tuple[
             for candidato in franja.get("candidatos", []):
                 nombre = _normalizar_texto_ocr(candidato.get("nombre", ""))
                 if len(nombre) >= 3 and nombre in etiqueta_norm:
-                    conteos[franja["id_franja"]]["votos_por_candidato"][candidato["id_candidato"]] = valor_numero
+                    conteos[franja["id_franja"]]["votos_por_candidato"].setdefault(
+                        candidato["id_candidato"], valor_numero
+                    )
                     return
         es_blanco = "blanco" in etiqueta_norm
         es_nulo = "nulo" in etiqueta_norm
@@ -289,7 +291,9 @@ def _extraer_conteos_document_ai(documento: dict, franjas: list[dict]) -> tuple[
             franjas_coincidentes = franjas
         if len(franjas_coincidentes) == 1:
             conteo = conteos[franjas_coincidentes[0]["id_franja"]]
-            conteo["votos_blancos" if es_blanco else "votos_nulos"] = valor_numero
+            clave = "votos_blancos" if es_blanco else "votos_nulos"
+            if conteo[clave] is None:
+                conteo[clave] = valor_numero
 
     for pagina in paginas:
         for campo in pagina.get("formFields", []):
