@@ -1,0 +1,23 @@
+{
+  "summary": "Iter16 is a non-destructive backend check of identifier uniqueness in UNIV-2026-BO-01. 8/8 pytest tests pass. (1) In the DB, the 1040 ánforas have numero_anfora values exactly 1..1040 with no duplicates. The 520 mesas have no duplicate numero_mesa. Recinto names have no duplicates after trim/casefold. The 3 partial unique indexes uniq_anfora/mesa/recinto_UNIV_2026_BO_01 exist (unique=true, partialFilterExpression={id_eleccion: UNIV-2026-BO-01}). (2) Every linked acta matches: numero_anfora equals its ánfora's number and ambiente equals 'Mesa {numero_mesa}', with 0 mismatches. (3) As admin, these PUTs returned 409: ánfora with another ánfora's number padded with spaces, mesa with another mesa's number, and recinto with another recinto's name in UPPERCASE. The documents are byte-identical afterwards. (4) The equivalent POSTs returned 409 and inserted nothing: ánfora with a duplicate number, mesa with a duplicate number, and recinto with a duplicate name in lowercase with spaces. (5) Snapshot hashes of anforas_mesa, mesas_sufragio, recintos_electorales and actas (eleccion) are identical before and after the run. Global actas total is 1042, with 855 esta_bloqueada=true (same as iter15). The public /resultados endpoint still reports ánforas 1040/852/188. The normalization endpoint was NOT invoked.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": ["/app/backend/tests/test_unicidad_identificadores_iter16.py", "/app/test_reports/pytest/pytest_iter16.xml"],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "_validar_unico_en_eleccion loads every document of the election (to_list(50000)) on each POST/PUT and compares in Python. This is O(n) per write. Consider storing a normalized field (e.g. numero_anfora_norm) with a unique index.",
+    "The check-then-insert is not atomic. For UNIV-2026-BO-01 the partial unique index only blocks exact-value races, not case or whitespace variants. Other elections have no DB-level protection, so two concurrent requests can both pass the check. Catch DuplicateKeyError -> 409, and consider creating indexes for every election.",
+    "PUT ánfora/mesa/recinto does not propagate changes to the linked actas (numero_anfora, ambiente, recinto). Only the normalization endpoint does. Renaming through the PUT endpoints will desync the actas.",
+    "PUT recinto/mesa runs the uniqueness check before checking that the document exists. A missing id with a duplicate value returns 409 instead of 404 (minor ordering issue).",
+    "The stored values are not trimmed: 'X ' is saved as-is (e.g. acta.recinto 'Fac. Ciencia y Tecnología ' has a trailing space). Normalize on write.",
+    "The normalization endpoint uses update_many without a transaction. A partial failure would leave a mixed state. It should not be re-run casually.",
+    "The login field is 'contrasena', not 'password'. Note this for future tests."
+  ],
+  "updated_files": ["/app/backend/tests/test_unicidad_identificadores_iter16.py"],
+  "success_rate": {"backend": "100% (8/8)", "frontend": "skipped (backend only)"},
+  "test_credentials": "Admin gerabdevsoft@gmail.com / STRE_Admin_2026 (login body uses field 'contrasena')",
+  "seed_data_creation": "None. All writes were duplicate attempts and all were rejected with 409.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "After normalization, the actas hash changed by design compared with iter15 (numero_anfora/ambiente rewritten). The iter15 baseline 2c16888239264592 is therefore obsolete. Use test_unicidad_identificadores_iter16.py: it takes its snapshot during the test. State counts are 855 esta_bloqueada of 1042 in total, and public ánforas are 1040/852/188."
+}

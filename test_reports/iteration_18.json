@@ -1,0 +1,37 @@
+{
+  "summary": "Iter18 frontend-only, read-only UI test of the Centro de Cómputo LocalizadorAnfora on UNIV-2026-BO-01 as admin. Desktop is 1920x1080, with an extra layout check on tablet at 768. Playwright aborted every non-login POST/PUT/PATCH/DELETE, and the mutation log was empty. All 7 requested behaviours PASS. (1) Initial load: Nivel is enabled, while Recinto and Mesa are disabled. instruccion-busqueda-anfora is shown, there are 0 ánfora cards, and there is no panel-formulario or cabecera. (2) Nivel 'Sede Sucre' gives 1034 ánforas, Recinto becomes enabled and Mesa stays disabled. (3) The first Recinto gives 70 ánforas and enables Mesa. Mesa 120 gives 2 ánforas. (4) Clicking an ánfora hides the list and shows cabecera-anfora-seleccionada below the filters, with number, name, mesa and recinto (e.g. 'Ánfora 1000 · Vicerrector · Mesa 504 · Facultad Técnica'). The form then appears. (5) With an ánfora selected, each of these hides the cabecera and form and shows the refreshed list: changing Mesa (2 results), changing Recinto (70, Mesa reset), changing Nivel (Recinto/Mesa reset to placeholders, Mesa disabled), typing a direct search (hierarchical filters reset, 11 results for '100') and typing more text. (6) Cambiar ánfora brings back the filtered list (the search value is kept) with no form. (7) Alignment: at desktop the direct-search input is 210px wide vs about 417px for each select, and all four controls are at y=382.5 with h=40. At tablet all four are on one row (y=374.5). One pre-existing data-loading bug was found outside the scope of this change; see critical issue.",
+  "backend_issues": {
+    "critical": [
+      {"endpoint": "GET /api/actas?id_eleccion=UNIV-2026-BO-01", "issue": "Hard cap .to_list(500) at server.py line 729, sorted by actualizado_en. UNIV has 1042 actas, so the API returns only 500. CentroComputoPage.seleccionarAnfora looks up the existing acta in this truncated list. Reproduced: Ánfora 1 (id_anfora 35cb374a-..., which has 4 actas in the DB, all esta_bloqueada=true) is absent from the response. The UI therefore shows an empty, EDITABLE form with the badge 'BORRADOR' for a consolidated/locked acta. Saving would create yet another duplicate acta. The 4 actas already present for ánfora 1 suggest this has already happened.", "priority": "HIGH"}
+    ],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [
+      {"flow": "Select ánfora whose acta is not among the 500 most recent", "issue": "No acta is loaded (conteos are 0, the state badge shows borrador, the inputs are editable) even though a locked acta exists. Fix: fetch the acta per ánfora on selection (e.g. GET /api/actas?id_anfora=...) or remove/paginate the 500 cap.", "affected_selectors": ["estado-acta-operativa", "estado-bloqueado", "panel-formulario"]}
+    ],
+    "design_issues": [
+      {"screen": "Centro de Cómputo localizador", "issues": ["The 'BÚSQUEDA DIRECTA' label sits about 2px higher than 'BÚSQUEDA JERÁRQUICA' (Label vs div with mb-1). The inputs themselves are aligned. Cosmetic only.", "At 768px the selects are only about 145px wide, so long recinto names truncate. Acceptable."]}
+    ]
+  },
+  "test_report_links": [],
+  "action_items": [
+    "HIGH: Fix GET /api/actas so it does not truncate at 500 (server.py:729), or load the acta for the selected ánfora with a dedicated query in seleccionarAnfora. Otherwise locked actas show as editable borrador and duplicates can be created.",
+    "Optional: Investigate and dedupe the 4 actas linked to ánfora 1 (id_anfora 35cb374a-7974-4b5a-9cc1-e48977c1b535) in UNIV-2026-BO-01.",
+    "Optional cosmetic: Align the 'Búsqueda directa' label with the 'Búsqueda jerárquica' label (use the same element/classes)."
+  ],
+  "critical_code_review_comments": [
+    "limpiarSeleccionAnfora does not reset `meta`. This is harmless today because seleccionarAnfora overwrites it, but it would be cleaner to reset it.",
+    "LocalizadorAnfora keeps its filter state when procesoActivo changes, so a stale idNodo from another election could remain. Consider keying the component by id_eleccion.",
+    "Selecting the same option again in a Radix Select does not fire onValueChange, so the current ánfora stays selected. This is expected behaviour, not a bug.",
+    "CentroComputoPage.jsx is 697 lines, near the 700-line limit. Consider extracting LocalizadorAnfora into its own file."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "N/A (skipped as requested; one read-only GET was used for RCA)", "frontend": "100% of the 7 requested scenarios"},
+  "seed_data_creation": "None. Read-only. The DB still holds 1042 actas, 855 of them esta_bloqueada, unchanged.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "UNIV-2026-BO-01 has 5 niveles: 'Sede Sucre' (1034 ánforas, 17 recintos) and Sucre, Sede Monteagudo, Sede Muyupampa, Derecho (2 ánforas each). Login body uses the field 'contrasena'. Abort mutating routes in Playwright to keep the test read-only. Ánfora 1000 has a borrador acta (126/172/2/3). Ánfora 1 has locked actas but is not returned by /api/actas because of the 500 cap.",
+  "rca of the issue": "Reproduction: as admin, select ánfora 1 in UNIV-2026-BO-01. The form shows zeros and 'BORRADOR'. In the DB, 4 actas exist for that id_anfora and all are esta_bloqueada. Cause: listar_actas uses .sort('actualizado_en',-1).to_list(500) while the election has 1042 actas, and the frontend relies on that list (actas.find by id_anfora). Mitigation: query by id_anfora at selection time, or raise the cap / add id_anfora filtering."
+}

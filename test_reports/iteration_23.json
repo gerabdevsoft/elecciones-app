@@ -1,0 +1,31 @@
+{
+  "summary": "Iter23: frontend-only, non-destructive retest of the iter22 fixes on UNIV-2026-BO-01, Borrador ánfora 1000, as admin. Every non-GET was intercepted and nothing was persisted: the aborted list is empty and every POST was mocked. All 5 retest items PASS. (1) barra-acciones-acta is 2 columns at 768, 1280, 1440, 1536 and 1920px and 1 column at 390px. No button has scrollWidth > clientWidth, and all 4 buttons are 40px tall at every width. 'Consolidar y Bloquear' is fully visible at 1536px (333px) and 1920px (349px). (2) Header at 768px: document scrollWidth equals the 768px viewport. The 7 nav links render as 40px icon-only links and stay clickable (nav-bitacora goes to /bitacora). Logout is icon-only (42px). cambiar-proceso and the user name are hidden. (3) Unlock modal (locked state mocked through GET /actas?): the text is cleared after Cancel and after Escape. During a POST /admin/desbloquear delayed 4s, the button shows 'Desbloqueando…', Cancel is disabled, and Escape and overlay clicks do not close the modal. (4) With a mocked successful POST and GET /actas/{id} returning 500, guardar, enviar, bloquear (confirm auto-accepted), observar and desbloquear each produce exactly 1 GET localizador-anforas. (5) Observar with a successful mocked GET detail (estado=observado): the modal closes and the badge changes from BORRADOR to OBSERVADA.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "Modal Observación (confirmarObservacion)", "issue": "If POST /observar succeeds but the follow-up GET /actas/{id} fails, the modal stays open with the text still filled in. The user only sees an error toast and may resubmit, creating a duplicate observation. Desbloquear, by contrast, closes its modal before the GET.", "selector": "[data-testid='modal-observacion-acta']", "priority": "LOW"}
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Global header at lg+ (1536/1920)", "issues": ["Because of max-w-7xl and flex-wrap, the header wraps into 3 rows (logo / nav / process + user + Salir), about 110-136px tall, and takes vertical space from the sticky header. Consider wider max-w or compacting the labels at lg-xl."]},
+      {"screen": "Global header < lg", "issues": ["The icon-only nav links and the logout button have no aria-label or title, so they have no accessible name or tooltip on tablet."]}
+    ]
+  },
+  "test_report_links": [],
+  "action_items": [
+    "Optional: in confirmarObservacion, close the modal and clear the text right after the POST succeeds, before GET /actas/{id}, as desbloquear already does.",
+    "Optional: add aria-label/title={e.label} to the nav Links and aria-label='Salir' to cerrar-sesion-btn.",
+    "Optional: fix the header wrapping into 3 rows at 1536/1920px."
+  ],
+  "critical_code_review_comments": [
+    "The Unlock modal's Cancel button has no data-testid.",
+    "CentroComputoPage.jsx is 812 lines (over 700). Extract LocalizadorAnfora into its own file.",
+    "The dialog's X close button stays enabled while a request is processing. onOpenChange guards against closing, but disabling or hiding it would give clearer feedback."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "N/A (skipped)", "frontend": "100% of requested retest items"},
+  "seed_data_creation": "None. No real writes.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Login via page.request POST /api/auth/login, then set localStorage stre_token, stre_usuario and stre_proceso_activo (the UNIV-2026-BO-01 object from GET /api/procesos). Ánfora 1000 id is f4805879-6644-4f04-a53a-1ea9fc43ef1d. To simulate a lock, set esta_bloqueada=true in the GET /actas? response. Mock every non-GET request."
+}

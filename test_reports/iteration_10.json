@@ -1,0 +1,32 @@
+{
+  "summary": "Frontend-only retest of the /trep refinements from iteration 9. All 4 requested checks pass. (1) The acta detail panel clears and shows the empty instruction whenever a filter changes: switching to Sucre>Ciencia y tecnología, switching to Monteagudo, typing structure number '10', and typing direct '10' after opening Ánfora 1 all reset it, and the list shows 'No existen actas consolidadas con estos filtros.' (2) Exact search: direct '1' and ' 1 ' (trimmed) match Ánfora 1. Direct '10', '11', '01' and '2' do not match. Structure '1' matches and structure '10', '01', '11' do not. (3) At 1920, 1440 and 1280 px, all 5 controls (2 levels, recinto, mesa, number) sit in one row at y=373 with equal 224px widths. (4) The DB snapshot hashes are unchanged before and after.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "abrirActa", "issue": "Race condition: if a filter changes while the GET for an acta is still in flight, setActa(data) runs after the clearing effect and shows an acta that no longer matches the filters. Fix with a request id or AbortController, or by checking that the acta is still in the filtered list.", "selector": "[data-testid='detalle-acta-publica']", "priority": "LOW"}
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "/trep structure filters", "issues": [
+        "The placeholder 'Número de ánfora en esta estructura' is cut off ('...en esta') at a 224px width. Use a shorter placeholder such as 'N° ánfora' or add a label.",
+        "Between 768 and 1279 px (md:grid-cols-2), 5 controls make 3 rows and the number input sits alone on the last row. Consider lg:grid-cols-3 or making the input span 2 columns.",
+        "Data only: recinto 'Fac. Ciencia y Tecnología' is under the node 'FACULTAD: Derecho'. Level labels are inconsistent (FACULTAD vs Facultad) and a level-0 node has a trailing space ('Monteagudo '). Ciudad and Sede nodes are mixed in one root select."
+      ]}
+    ]
+  },
+  "test_report_links": [],
+  "action_items": [
+    "Optional: guard abrirActa against stale responses",
+    "Optional: shorten the structure number placeholder and fix the md/lg grid wrap"
+  ],
+  "critical_code_review_comments": [
+    "TrepPublicoPage.jsx: the clearing effect at lines 38-40 is correct. rutaNodos always gets a new array identity from seleccionarNodo, so the effect fires reliably.",
+    "abrirActa has no try/catch or loading state. A failed GET produces an unhandled promise rejection and gives the user no feedback."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "N/A (skipped)", "frontend": "100% (4/4 requested checks)"},
+  "seed_data_creation": "None. DB is unchanged and verified with /tmp/snap.py (nodos 43b8dd21, recintos 69358620, mesas 1888d94b, anforas 936c7cb8, actas e31662cb).",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Only public Ánfora 1 exists (path Sucre>Derecho, recinto d89b179f, Mesa 415). The non-matching branches are Sucre>Ciencia y tecnología and Monteagudo. The DB snapshot script is /tmp/snap.py; run it from /app/backend."
+}

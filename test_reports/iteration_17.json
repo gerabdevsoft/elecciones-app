@@ -1,0 +1,20 @@
+{
+  "summary": "Iter17 backend-only check of normalized uniqueness in UNIV-2026-BO-01. All 15/15 pytest tests pass. (1) DB fields: there are 1040 ánforas with numero_anfora_normalizado exactly '1'..'1040' and 520 mesas with numero_mesa_normalizado exactly '1'..'520'. All recinto nombre_normalizado values equal strip().casefold() of nombre, all stored values are already trimmed, and there are no duplicates. (2) The partial unique indexes uniq_anfora_norm / uniq_mesa_norm / uniq_recinto_norm_UNIV_2026_BO_01 exist on (id_eleccion, *_normalizado), with unique=true and partialFilterExpression {id_eleccion: EID}. (3) Every acta matches its entity (numero_anfora, ambiente='Mesa N', recinto=nombre), with 0 mismatches. (4) A temporary PUT of '   TEST_Iter17_x_ZZ  ' on one ánfora, one mesa and one recinto (each with linked actas) stored the trimmed value and the casefolded _normalizado. No other field changed. Every linked acta was updated (numero_anfora / ambiente / recinto). Restoring the original value made each document identical to its original and re-propagated to the actas. (5) PUT duplicates that differ only by case, spaces or a tab return 409, and so do POST duplicates for ánfora, mesa and recinto. Snapshots are identical and nothing was inserted. (6) A PUT to a nonexistent id with a duplicate value returns 404 for all three. (7) A full SHA256 snapshot of all actas plus the ánforas, mesas and recintos of the election is identical before and after the run: 1042 actas, 855 esta_bloqueada; estados are 854 bloqueado, 187 borrador, 1 null. No TEST_ residue remains.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": ["/app/backend/tests/test_unicidad_normalizada_iter17.py", "/app/test_reports/pytest/pytest_iter17.xml"],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Check-then-insert is still not atomic. The normalized unique index for this election will raise DuplicateKeyError on a race, and that error is not caught, so the client gets a 500 instead of a 409. Wrap the inserts and updates to map DuplicateKeyError to 409.",
+    "The normalized unique indexes are only created for elections that run normalizar-identificadores-demo. Other or new elections have only the app-level check. Also, legacy documents without *_normalizado are invisible to that check.",
+    "If normalizar-identificadores-demo is re-run after a new ánfora or mesa is created out of creado_en order, sequential update_one calls can collide with the unique indexes mid-loop and leave a partial state. There is no transaction.",
+    "Rewriting acta fields (numero_anfora/ambiente/recinto) without an audit trail may be a concern for blocked actas in an electoral context. Consider logging these changes."
+  ],
+  "updated_files": ["/app/backend/tests/test_unicidad_normalizada_iter17.py"],
+  "success_rate": {"backend": "100% (15/15)", "frontend": "skipped (backend only)"},
+  "test_credentials": "Admin gerabdevsoft@gmail.com / STRE_Admin_2026 (login field 'contrasena')",
+  "seed_data_creation": "None. The temporary PUT values were restored within the same test and verified byte-identical.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Use test_unicidad_normalizada_iter17.py: it snapshots at runtime and restores its temporary PUTs. Baseline after normalization: 1042 actas, 855 esta_bloqueada; estados are 854 bloqueado, 187 borrador, 1 null. No OCR, uploads or demo loads were invoked."
+}

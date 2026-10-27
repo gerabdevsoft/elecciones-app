@@ -1,0 +1,37 @@
+{
+  "summary": "Frontend-only test of the hierarchical TREP filter on /trep (UNIV-2026-BO-01; only 1 public acta, Ánfora 1 in Sucre > Derecho > recinto 'Fac. Ciencia y Tecnología' > Mesa 415). The cascading selectors work: the first selector shows only root nodes, the child selector appears only when children exist, recinto stays disabled until a terminal node is selected and lists only recintos whose id_nodo_padre matches it, mesa lists only that recinto's mesas, and placeholders use nombre_nivel ('Ciudad', 'FACULTAD'). Direct search works and opens the detail view. No JS errors. CRITICAL BUG: as soon as ANY node is selected, the Actas list becomes empty, even for the compatible path. Matching filters plus number '1' return 0 results instead of Ánfora 1. RCA: the frontend's coincideRuta checks anfora.path_ancestros, but the backend localizador_publico_actas does not include path_ancestros in its anforas_mesa projection, so every() on an empty array of ancestors fails for any selected node. I confirmed this by intercepting the response in the browser and injecting path_ancestros: with that, all AND scenarios behaved correctly (compatible path + '1' -> only Ánfora 1; '999' -> empty; Derecho -> Ciencia y tecnología + '1' -> empty; Sede Sucre + '1' -> empty). The DB snapshot (md5 of nodos/recintos/mesas/anforas/actas) is identical before and after testing, and the only backend diff is the nombre_nivel projection.",
+  "backend_issues": {
+    "critical": [
+      {"endpoint": "GET /api/publico/procesos/{id}/localizador", "issue": "The anforas projection omits path_ancestros (the field exists in anforas_mesa documents). The frontend route filter depends on it, so every structure filter returns 0 actas.", "priority": "CRITICAL"}
+    ],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "TrepPublicoPage Actas list", "issue": "Selecting any node (e.g. Sucre) empties the list; with the full compatible path (Sucre > Derecho > recinto > Mesa 415 + number 1), Ánfora 1 does not appear. Root cause is the missing path_ancestros in the backend projection (see backend_issues).", "selector": "[data-testid='lista-actas-publicas']", "priority": "CRITICAL"}
+    ],
+    "integration_issues": [
+      {"flow": "Structure filter -> Actas list", "issue": "The frontend expects anfora.path_ancestros, but the backend does not send it.", "affected_selectors": ["[data-testid='filtro-publico-nodo-0']", "[data-testid='buscar-anfora-en-estructura']"]}
+    ],
+    "design_issues": [
+      {"screen": "/trep root selector", "issues": ["The root level mixes two existing hierarchies: 'Sucre' and 'Monteagudo' (nombre_nivel 'Ciudad') and 'Sede Sucre/Monteagudo/Muyupampa' (nombre_nivel 'Sede'). The placeholder takes only the first label ('Ciudad'). This comes from the existing data, but the user may still perceive mixed levels.", "Terminal nodes without public actas (Sede Sucre, Monteagudo) enable an empty recinto selector with no 'sin recintos publicados' message.", "Data: the recinto 'Fac. Ciencia y Tecnología' hangs under the node FACULTAD 'Derecho' (data inconsistency, not a UI bug)."]}
+    ]
+  },
+  "test_report_links": [],
+  "action_items": [
+    "In server.py localizador_publico_actas, add \"path_ancestros\": 1 to the anforas_mesa projection (or compute coincideRuta in the frontend from mesa/recinto path_ancestros). This is read-only and does not change the DB structure.",
+    "Optional: group the roots by nombre_nivel or show the level next to each option when siblings have different nombre_nivel; show a message when a terminal node has no published recintos.",
+    "Optional: when the user types in the direct search, the structure filters (rutaNodos/recinto/mesa) still apply via AND. Today the direct search only becomes independent because typing in the structure fields clears it, not the other way round. Consider clearing or ignoring the structure filters when numeroDirecto has a value."
+  ],
+  "critical_code_review_comments": [
+    "coincideRuta depends on a field the endpoint does not return. Use the path_ancestros of the related mesa (already returned) as a fallback.",
+    "Direct search is not fully independent: with structure filters selected, typing a direct number keeps the AND with rutaNodos/idRecinto/idMesa."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "N/A (frontend only)", "frontend": "~70% (cascade, placeholders, direct search, empty-mismatch OK; compatible-match result FAILS)"},
+  "seed_data_creation": "None. No data created or modified; DB hash snapshot identical before/after.",
+  "retest_needed": true,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "UNIV-2026-BO-01 has only 1 public acta: anfora id 35cb374a-..., numero '1', mesa 415, recinto 'Fac. Ciencia y Tecnología' (id_nodo_padre = Derecho 03bab23d...), path Sucre (9664a364...) > Derecho. Roots: Sucre, Monteagudo (Ciudad), Sede Sucre, Sede Monteagudo, Sede Muyupampa (Sede). Sucre children: Derecho, Ciencia y tecnología (FACULTAD). Expected after fix: Sucre > Derecho > recinto > Mesa 415 + '1' -> exactly Ánfora 1; any other branch + '1' -> empty. DB snapshot script: /tmp/snap.py (md5 of the collections).",
+  "rca of the issue": "Reproduction: open /trep and select 'Sucre' in filtro-publico-nodo-0; the list goes empty although Ánfora 1 belongs to Sucre. Cause: TrepPublicoPage.jsx line 75 uses anfora.path_ancestros, but server.py line 1571 projects only id, id_mesa, id_recinto, numero_anfora, nombre and tipo_mesa. Mitigation: add path_ancestros to the projection. Verified with response injection via page.route: all expected scenarios pass."
+}

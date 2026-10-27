@@ -1,0 +1,36 @@
+{
+  "summary": "Mandatory retest of the Vicerrector demo repair for UNIV-2026-BO-01. Backend checks were read-only DB plus API, 8/8 pytest checks passed, and the public UI was also checked. (1) 'Boleta Vicerrector' / 'Franja Vicerrector' has exactly 2 candidates: Lic. Elena Torrico (FA) and Ing. Marco Salazar (RU). (2) All 519 Vicerrector demo actas have non-empty votos_por_candidato with both candidates. Totals: estudiante 514 actas in 80-349, docente 5 actas in 10-36, blank+null at most 9.1%. (3) All 519 have reparado_demo_usfx=true, and they are the only actas with this flag. States are preserved: 431 bloqueado (with validator) and 88 borrador (esta_bloqueada=false, no validator), and bitacora is empty. (4) The 519 Rector demo actas are untouched: no repair flag, actualizado_en==creado_en, 2 candidates, ranges OK, 420 blocked / 99 drafts. The 4 pre-existing non-demo actas are also untouched. (5) Public and university results show Vicerrector with non-zero values. Docentes: Torrico 51 / Salazar 37 (base 88). Estudiantes: Torrico 43683 / Salazar 43876 (base 87559). These match an exact sum of the blocked actas per estamento. The public universitario object equals the private resultado-universitario. Totals are 1040 / 852 / 188. The /resultados-publicos UI shows the same numbers and charts. The public acta detail of a blocked Vicerrector acta returns candidate rows, and a draft returns 404. (6) The original load endpoint returned reutilizada=true with actas_existentes=1038, and the acta count is unchanged. Snapshot hashes were identical before and after the run (actas 7814e010901d935b, anforas 0202224fe694be42, procesos 1870343a46956944). (7) An isolated unit test confirms that _repartir_votos_aleatorios(…, 0) raises ValueError. The endpoint has an explicit 409 check for franjas without candidates; it was verified by code review because exercising it through the endpoint would need destructive data. The repair endpoint was NOT called.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "POST /api/admin/procesos/{id}/reparar-demo-vicerrector-usfx", "issue": "Not idempotent. Each call overwrites all 519 Vicerrector demo actas with new random votes, including blocked/consolidated actas. It ignores the existing reparado_demo_usfx flag, leaves no bitacora entry, and the actas query has no sort, so results are not deterministic. It should be guarded (skip if already repaired) or removed now that the repair is done."},
+      {"endpoint": "carga-demo-resultados-usfx", "issue": "The 409 check for franjas without candidates runs after the reutilizada early-return, so it only fires on a fresh load. This is acceptable, but note it."},
+      {"endpoint": "data (non-demo)", "issue": "4 pre-existing non-demo actas (created Sep 28 / Oct 14) share the same id_anfora 35cb374a… and are all esta_bloqueada=true. This predates the demo. Check whether aggregates count this ánfora 4 times. (Iter12 context said 2 pre-existing actas; the correct count is 4.)"}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "/resultados-publicos", "issues": ["The Decano franja (0 candidates) still renders empty chart axes with 'Base 0 · Umbral 1'. An empty-state message is recommended."]}
+    ]
+  },
+  "test_report_links": ["/app/backend/tests/test_demo_vicerrector_repair_iter13.py", "/app/backend/tests/inspect_non_demo_actas.py", "/app/backend/tests/snapshot_actas.py", "/app/test_reports/pytest/pytest_iter13.xml"],
+  "action_items": [
+    "Guard or disable reparar-demo-vicerrector-usfx so an accidental second call cannot rewrite consolidated actas.",
+    "Optional: review the 4 duplicate blocked non-demo actas on ánfora 35cb374a… and add an empty state for franjas without candidates."
+  ],
+  "critical_code_review_comments": [
+    "The repair endpoint does 519 sequential update_one calls. A bulk_write would be better.",
+    "The repair selects the Vicerrector papeleta by name substring and uses only franjas[0]. This is fragile for other processes.",
+    "server.py is about 3030 lines and should be split into routers."
+  ],
+  "updated_files": ["/app/backend/tests/test_demo_vicerrector_repair_iter13.py", "/app/backend/tests/inspect_non_demo_actas.py"],
+  "success_rate": {"backend": "100% (8/8)", "frontend": "100% (public results show Vicerrector values for both estamentos, matching the API)"},
+  "test_credentials": "Admin gerabdevsoft@gmail.com / STRE_Admin_2026 (login field 'contrasena').",
+  "seed_data_creation": "None. The only write was the authorized idempotent load call (reutilizada=true, no changes; hashes unchanged).",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "UNIV-2026-BO-01: 1040 ánforas and 1042 actas (1038 demo + 4 pre-existing non-demo on a single ánfora). Demo Rector: 420 blocked / 99 drafts. Demo Vicerrector: 431 / 88, all with reparado_demo_usfx=true. Run pytest with '-n 0'. The snapshot baseline after the repair is actas 7814e010901d935b.",
+  "rca of the issue": "The iter12 bug (Vicerrector franja with 0 candidates, votes dropped) is resolved. Candidates were added, fail-fast validation exists in both _repartir_votos_aleatorios and the load endpoint, and the 519 Vicerrector actas were regenerated with valid ranges and their states preserved."
+}

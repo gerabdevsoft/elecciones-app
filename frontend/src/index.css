@@ -1,0 +1,118 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap');
+
+:root {
+  --stre-bg: #F8FAFC;
+  --stre-surface: #FFFFFF;
+  --stre-subtle: #F1F5F9;
+  --stre-text: #0F172A;
+  --stre-text-2: #475569;
+  --stre-muted: #64748B;
+  --stre-primary: #1E3A8A;
+  --stre-primary-hover: #1E40AF;
+  --stre-success: #059669;
+  --stre-success-bg: #ECFDF5;
+  --stre-warning: #D97706;
+  --stre-warning-bg: #FEF3C7;
+  --stre-danger: #DC2626;
+  --stre-danger-bg: #FEF2F2;
+  --stre-ocr: #7C3AED;
+  --stre-ocr-bg: #F5F3FF;
+  --stre-border: #E2E8F0;
+  --stre-border-strong: #CBD5E1;
+  --stre-focus: #2563EB;
+}
+
+@layer base {
+  :root {
+    --background: 210 40% 98%;
+    --foreground: 222 47% 11%;
+    --card: 0 0% 100%;
+    --card-foreground: 222 47% 11%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 222 47% 11%;
+    --primary: 221 78% 33%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 210 40% 96%;
+    --secondary-foreground: 222 47% 11%;
+    --muted: 210 40% 96%;
+    --muted-foreground: 215 16% 47%;
+    --accent: 210 40% 96%;
+    --accent-foreground: 222 47% 11%;
+    --destructive: 0 74% 50%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 214 32% 91%;
+    --input: 214 32% 91%;
+    --ring: 221 83% 53%;
+    --radius: 0.5rem;
+  }
+}
+
+@layer base {
+  * { @apply border-border; }
+  body {
+    @apply bg-background text-foreground;
+    font-family: 'Inter', system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  h1, h2, h3, h4 {
+    font-family: 'Outfit', 'Inter', sans-serif;
+    letter-spacing: -0.02em;
+  }
+  .font-data { font-family: 'JetBrains Mono', monospace; }
+  .font-display { font-family: 'Outfit', sans-serif; }
+}
+
+/* Grid pattern watermark */
+.stre-watermark {
+  background-image:
+    linear-gradient(rgba(30, 58, 138, 0.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(30, 58, 138, 0.04) 1px, transparent 1px);
+  background-size: 32px 32px;
+}
+
+.stre-noise::before {
+  content: '';
+  position: absolute; inset: 0;
+  background-image: radial-gradient(rgba(15,23,42,0.02) 1px, transparent 1px);
+  background-size: 3px 3px;
+  pointer-events: none;
+}
+
+/* Panel de imagen */
+.acta-canvas {
+  background: repeating-conic-gradient(#0f172a 0% 25%, #111827 0% 50%) 50% / 20px 20px;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: #f1f5f9; }
+::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 6px; }
+::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+
+/* Animaciones sutiles */
+@keyframes fadeInUp {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.animate-fade-up { animation: fadeInUp 0.4s ease-out both; }
+
+/* Tarjeta institucional */
+.stre-card {
+  background: white;
+  border: 1px solid var(--stre-border);
+  border-radius: 12px;
+  box-shadow: 0 1px 2px rgba(15,23,42,0.04);
+  transition: box-shadow 200ms ease, border-color 200ms ease;
+}
+.stre-card:hover { box-shadow: 0 4px 12px rgba(15,23,42,0.06); }
+
+.stre-badge {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 2px 8px; border-radius: 999px;
+  font-size: 11px; font-weight: 700; letter-spacing: 0.06em;
+  text-transform: uppercase;
+}

@@ -1,0 +1,25 @@
+{
+  "summary": "Regresión BOLA SEC-001 (GET /api/actas sin id_eleccion) y SEC-002 (GET /api/procesos/{id}/diseno sin asignación). 12/12 tests PASS en pentest con tokens reales de admin, operador y validador. Confirmado: (1) operador y validador reciben solo actas de elecciones y ánforas de sus asignaciones cuando llaman /api/actas sin filtro (no se filtra documentación de otras elecciones/ánforas); (2) ambos no-admin reciben 404 al pedir el diseño de una elección no asignada (ELECCION-NO-ASIGNADA-FAKE-XYZ-9999); (3) admin sigue operando con normalidad: /api/actas lista datos (status 200) y /api/procesos/UNIV-2026-BO-01/diseno responde 200 con `papeletas`; (4) operador conserva flujos normales (/api/actas?id_eleccion=UNIV-2026-BO-01 y /api/procesos/UNIV-2026-BO-01/anforas 200 + no leaks de otras elecciones). Verificado adicionalmente que las actas devueltas al operador sin filtro son subconjunto de las del admin.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_sec_regression_iter4.py",
+    "/app/test_reports/pytest/iter4_sec.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py:653-686 (listar_actas) — Fix SEC-001 correctamente aplicado: para no-admin se construye q['id_eleccion']={$in: elecciones_asignadas} y q['id_anfora']={$in: anforas_permitidas}, usando _filtro_anforas_asignadas por elección. Comportamiento verificado contra DB real.",
+    "server.py:1615-1631 (obtener_diseno) — Fix SEC-002 correctamente aplicado: tras find_one del proceso, si el usuario no es admin se consulta db.asignaciones_operativas por (id_usuario, id_eleccion); si no existe retorna 404 'Diseño no disponible'. Status 404 uniforme (no 403) evita enumeración de ids.",
+    "Mantengo recomendación de iteración 3: añadir DELETE /api/admin/usuarios-operativos/{id} para limpieza controlada (no bloqueante)."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_sec_regression_iter4.py (nuevo, 12 tests dedicados a SEC-001/SEC-002)"
+  ],
+  "success_rate": {"backend": "100% (12/12)", "frontend": "N/A (skipped per request)"},
+  "test_credentials": "admin/operador/validador verificados contra /api/auth/login (campo correcto: `contrasena`).",
+  "seed_data_creation": "Ninguno. No se modificó data electoral ni se subieron archivos. ELECCION-NO-ASIGNADA-FAKE-XYZ-9999 se usa solo como id inventado para probar 404.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Regresión BOLA cerrada. Para re-ejecutar: `pytest /app/backend/tests/test_sec_regression_iter4.py -v`. El test infere el scope del operador vía /api/mis-asignaciones si existe; si no, asume UNIV-2026-BO-01 por fixture. No requiere OCR, no toca fixtures electorales.",
+  "rca of the issue": "SEC-001: antes del fix, listar_actas construía q={} cuando id_eleccion era None sin importar el rol, devolviendo todas las actas (BOLA). Fix: para no-admin se recorren asignaciones_operativas y se restringe id_eleccion e id_anfora por scope. SEC-002: antes del fix, obtener_diseno solo verificaba existencia del proceso. Fix: tras hallar el proceso, para no-admin se exige una asignación_operativa que empate (id_usuario, id_eleccion); de lo contrario 404 (no 403, evitando enumeración). Ambos verificados end-to-end con tokens reales."
+}

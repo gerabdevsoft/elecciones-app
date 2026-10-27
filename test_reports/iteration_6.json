@@ -1,0 +1,36 @@
+{
+  "summary": "Retest crítico post-fix WebSocket subprotocol (iter6). VERIFICADO en navegador real (Chromium Playwright) y backend: (1) Login admin OK -> seleccionar PRES-2026-BO-01 -> /resultados. (2) WS creado a 'wss://centro-computo.preview.emergentagent.com/api/ws/resultados/PRES-2026-BO-01' SIN '?token=' y SIN cualquier query string. (3) Badge visible = 'CONECTADO' (verde, con ícono radio). (4) Backend pytest 4/4 PASS: test_ws_echoes_subprotocol confirma ws.subprotocol == token (eco correcto); test_ws_rejects_without_subprotocol y test_ws_rejects_invalid_token confirman cierre con 1008; test_logout_revoca_token_no_regresion confirma que /auth/me devuelve 401 tras logout (no hay regresión). El fix en server.py L71 (`websocket.accept(subprotocol=subprotocolo)`) y L2213 (pasar token como subprotocolo) resuelve el bug reportado en iter5.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "/resultados (dev console)", "issues": ["Dos warnings 'WebSocket is closed before the connection is established' aparecen al montar la página; corresponden al double-mount de React StrictMode en dev. No afecta el estado final (WS CONECTADO). Opcional: cancelar la conexión en el cleanup antes de que termine el handshake."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_ws_resultados_iter6.py",
+    "/app/test_reports/pytest/iter6_ws.xml",
+    "/app/test_reports/iter6_resultados.png"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py:65-72 — Fix correcto: GestorResultadosEnVivo.conectar ahora acepta parámetro subprotocolo y lo pasa a websocket.accept(). Compatible con /api/ws/publico (que llama sin subprotocolo = None, Starlette no echa header, browser que no envía header está feliz).",
+    "server.py:2195-2218 — websocket_resultados valida JWT desde Sec-WebSocket-Protocol, chequea revocación JTI, verifica rol en {admin, resultados}, y pasa el token como subprotocolo al accept. RFC 6455 compliance verificado en navegador real.",
+    "ResultadosPage.jsx:85-89 — Usa WebSocket(url, [token]) correctamente. La URL NO lleva token en query string; el token viaja en el header Sec-WebSocket-Protocol como se requiere.",
+    "Observación menor: en el cleanup del useEffect (L98-101), socket.close() puede ejecutarse mientras el handshake sigue vivo durante React StrictMode double-mount, generando los dos warnings observados. No impacta funcionalidad."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_ws_resultados_iter6.py (nuevo)"
+  ],
+  "success_rate": {"backend": "100% (4/4)", "frontend": "100% (badge CONECTADO + WS URL sin ?token=)"},
+  "test_credentials": "Usados tal cual de /app/memory/test_credentials.md.",
+  "seed_data_creation": "Ninguna.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Fix WS subprotocol confirmado en navegador real. Si hay próximas iteraciones, el patrón `websocket.accept(subprotocol=...)` debe mantenerse. Comando regresión: `pytest /app/backend/tests/test_ws_resultados_iter6.py -v`.",
+  "rca of the issue": "RCA iter5: El handler WS validaba el JWT en el header Sec-WebSocket-Protocol pero el accept() delegado en GestorResultadosEnVivo.conectar NO ecoaba el subprotocolo, violando RFC 6455 §4.2.2. Chrome/Firefox cerraban el handshake. FIX aplicado en iter6: (a) GestorResultadosEnVivo.conectar acepta parámetro `subprotocolo: Optional[str]=None` y lo pasa a websocket.accept(); (b) websocket_resultados invoca `gestor_resultados_en_vivo.conectar(id_eleccion, websocket, token)`. Validación browser real: badge 'CONECTADO' y ws.subprotocol==token. Validación pytest: 4/4 PASS."
+}

@@ -1,0 +1,33 @@
+{
+  "summary": "Iter21, read-only test of the Centro de Cómputo changes on UNIV-2026-BO-01 as admin: action bar, Observar dialog and estado badges in the localizador. Backend pytest: 5/5 PASS. Across 1040 ánforas, every estado_acta matches an independent canonical-acta recomputation: 852 consolidada, 187 borrador, 1 sin_datos. The UI works: badges render (Consolidada, Borrador, Sin datos). Observar is red (rgb(222,33,33), destructive) and opens modal-observacion-acta, which shows the red Ánfora/nombre notice, a textarea and a 0/10 counter. Its confirm button stays disabled below 10 characters and enables at 10 or more. Cancel closes the modal with no mutation, and no window.prompt or confirm was triggered. Cambiar ánfora and the jerárquico nodo and recinto filters keep the badges and show no errors. All four buttons share the same height (40px) and width, with no box overlap at 1920, 1440, 1280, 1024, 768 or 390px. Bug: at xl widths (1280px and up) the labels do not fit inside the buttons and get clipped. Playwright aborted every non-login write, and the write and dialog logs were both empty.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "barra-acciones-acta (xl:grid-cols-4)", "issue": "At viewports of 1280px and up, the 4-column grid sits inside the half-width form panel, which leaves only 130-170px per button. The labels overflow and get clipped. At 1920px 'Consolidar y Bloquear' shows as 'Consolidar y Bloquea'. At 1440px 'Enviar a validación' is also clipped. At 1280px Guardar, Enviar and Consolidar all overflow (scrollWidth > clientWidth), and because the content is centred it spills out both sides: the lock icon of Consolidar visually bleeds into the Observar button. Between 768 and 1279px the 2-column layout is fine, and at 390px the 1-column layout is fine.", "selector": "[data-testid='barra-acciones-acta']", "priority": "HIGH"}
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Modal Observar", "issues": ["The textarea text is kept after Cancel or close: reopening the modal still shows the earlier text. Clear observacion when the modal closes, or keep it as an intentional draft.", "The dialog can be dismissed with Esc or overlay click even while 'observando' is true (onOpenChange is not guarded)."]}
+    ]
+  },
+  "test_report_links": ["/app/backend/tests/test_localizador_estado_acta_iter21.py", "/app/test_reports/pytest/iter21.xml"],
+  "action_items": [
+    "Fix the clipped action-bar labels at xl widths. Options: use sm:grid-cols-2 with 2xl:grid-cols-4 (or drop the 4-column breakpoint, since the panel is half the width), or allow wrapping with whitespace-normal h-auto min-h-10 and keep equal heights via grid auto-rows-fr. Re-check at 1280, 1440 and 1920px that scrollWidth <= clientWidth for all 4 buttons.",
+    "Optional: reset the observacion text when modalObservacion closes, and block closing the dialog while the request is in flight."
+  ],
+  "critical_code_review_comments": [
+    "The localizador is loaded only once, on mount or when the process changes. After guardar, enviar, observar, bloquear or desbloquear, cargarLocalizador() is not called again, so the estado_acta badges stay stale until a page reload. Call cargarLocalizador() after each successful mutation.",
+    "ESTADO_ANFORA has no entry for estados such as 'bloqueado' with esta_bloqueada false, or any future estado, so those silently fall back to 'Sin datos', which is misleading. Add a generic fallback label instead of sin_datos when estado_acta is present but unknown.",
+    "The header badge estado-acta-operativa shows the raw estado string ('borrador', 'enviado') rather than the human-readable ESTADO_ANFORA labels. Reuse the same map so the wording is consistent.",
+    "consolidarBloquear still uses window.confirm. It was out of scope and not triggered, but it is inconsistent with the new dialog pattern.",
+    "CentroComputoPage.jsx is 777 lines (more than 700). Consider extracting LocalizadorAnfora and the modals into separate files."
+  ],
+  "updated_files": ["/app/backend/tests/test_localizador_estado_acta_iter21.py"],
+  "success_rate": {"backend": "100%", "frontend": "90% (all functional checks pass; button label overflow at xl widths)"},
+  "test_credentials": "Admin gerabdevsoft@gmail.com / STRE_Admin_2026. Note: the login body field is 'contrasena', not 'password'.",
+  "seed_data_creation": "None. Read-only.",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Run the pytest file with '-n 0 -s'. Borrador ánfora 1000 has id f4805879-6644-4f04-a53a-1ea9fc43ef1d (acta e31c9b4d). Sin-datos ánfora 2 has id 8d348716-bb27-4908-a896-0401fa7be330. Searching '100' gives 1 Consolidada and 10 Borrador. The demo data has no enviado or observado actas. Route-abort every non-GET request except /auth/login to stay read-only. Measure overflow with scrollWidth > clientWidth on the 4 button testids at 1280, 1440 and 1920px.",
+  "rca of the issue": "The action bar uses xl:grid-cols-4. At xl the page grid is lg:grid-cols-2, so the form panel is about 45% of the viewport minus p-6 padding. With an icon and the nowrap label from the Button default styles, 'Consolidar y Bloquear' and 'Enviar a validación' need about 175-185px, but each column is 130-170px, so the labels overflow and get clipped."
+}

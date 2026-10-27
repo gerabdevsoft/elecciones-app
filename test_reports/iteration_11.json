@@ -1,0 +1,29 @@
+{
+  "summary": "Final frontend verification of /trep after the iteration 10 fixes. (1) Race condition FIXED: with the acta GET delayed 3s via page.route, opening Ánfora 1 and then immediately selecting root 'Monteagudo' (list empty) or typing direct '10' leaves 'acta-publica-vacia' shown after the late response arrives; detalle-acta-publica count=0. A normal open with no filter change still shows the detail. (2) Error handling FIXED: a 500 response and a network abort on the acta GET both show 'error-acta-publica' ('No fue posible cargar el acta consolidada.'), with no pageerror or unhandled promise rejection; the error clears when filters change. (3) Responsive: placeholder 'N° de ánfora' is fully legible at every width (96px text in >=198px available). 1920/1440/1280: 5 controls in one row, 224px each. 768: number input spans the full width (670px). 390: single column with no horizontal overflow. REMAINING ISSUE at 1024 (lg, 1024-1279): with 2 node levels selected, the grid is still 2 columns but the input has lg:col-span-1, so it sits alone at half width (449px) on row 3. (4) No regressions: direct search '1' and ' 1 ' match; '10', '11', '01' and '2' do not. The cascade Sucre>Derecho enables recinto only at the leaf, then Mesa 415 leads to 1 acta. Structure search '1' matches; '10' and '01' do not. DB snapshot hashes are unchanged.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "/trep structure filters at 1024-1279px", "issues": [
+        "The input className 'md:col-span-2 lg:col-span-1' undoes the md full-span between 1024 and 1279px, where the grid is still md:grid-cols-2 (it only becomes 5 columns at xl). Result: at 1024 with Sucre>Derecho, 'buscar-anfora-en-estructura' sits alone at half width. Fix: use 'md:col-span-2 xl:col-span-1'.",
+        "Minor: when only the root level exists (4 controls), the md span-2 makes Mesa sit alone at half width with the input below it at full width (768/1024). This is acceptable but not perfectly balanced.",
+        "Minor (mobile 390): the Elección select truncates 'Elecciones Claustros Universitarios USFX 20…'."
+      ]}
+    ]
+  },
+  "test_report_links": [],
+  "action_items": [
+    "Change the TrepPublicoPage.jsx line 171 input class 'lg:col-span-1' to 'xl:col-span-1' so the number input spans the full row at 1024-1279px."
+  ],
+  "critical_code_review_comments": [
+    "abrirActa computes sigueDisponible from the 'anforas' captured in the click-time closure, so that check is effectively always true. The real protection comes from solicitudActaRef, which the filter effect bumps. It works, but the check is redundant and could be removed.",
+    "Both the idEleccion effect and the filter effect call setActa(null). This is harmless."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "N/A (skipped)", "frontend": "~92% (race, error, legibility and regressions pass; md/lg isolation at 1024 not fully fixed)"},
+  "seed_data_creation": "None. The DB is unchanged, verified with /tmp/snap.py (same hashes as iteration 10).",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Use page.route on '**/api/publico/procesos/*/actas/*' with an asyncio.sleep delay (import asyncio inside the script) to test the race condition, and fulfill(status=500) or abort() to test the error path. Only public Ánfora 1 exists (Sucre>Derecho, Mesa 415). Monteagudo is the empty branch. The layout grid selector is \"[data-testid='filtros-publicos-actas'] .grid.md\\\\:grid-cols-2\"."
+}

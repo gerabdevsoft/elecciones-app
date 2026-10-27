@@ -1,0 +1,50 @@
+{
+  "summary": "Security retest after SEC-001/2/3 fixes. Added 20 new tests covering: scoped /api/procesos & /api/procesos/{id}/anforas for operator/validator, 403 enforcement on /resumen, /resultado-universitario, /recintos, /mesas, /estructura, /agregacion, unauthenticated access, image-token protection, and public draft isolation. 38/41 passed, 2 skipped (no non-locked image available in dataset — limitation documented, no OCR performed as instructed), 1 FAILED exposing a NEW privilege-escalation regression on /api/admin/usuarios-operativos. Frontend smoke OK: TREP desktop & resultados-publicos (desktop + mobile) only expose the locked acta; the unblocked draft on the other anfora is NOT visible publicly.",
+  "backend_issues": {
+    "critical": [
+      {
+        "endpoint": "POST /api/admin/usuarios-operativos",
+        "issue": "SEC-REGRESSION / privilege escalation: endpoint uses `Depends(usuario_actual)` instead of `Depends(requerir_admin)`. Any logged-in operator can create new operational users (verified: operator token → 200 OK with new user id). Fix: change line 796 of /app/backend/server.py from `usuario: dict = Depends(usuario_actual)` to `admin: dict = Depends(requerir_admin)` (and remove the unused reassignment of `usuario` below).",
+        "priority": "CRITICAL"
+      }
+    ],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "ResultadosPublicosPage", "issues": ["Recharts still logs width/height(-1) warnings on initial render — non-blocking (carried over from iteration 1)."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/backend_test.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "CRITICAL: fix /api/admin/usuarios-operativos to require admin (`Depends(requerir_admin)`); currently any authenticated operator/validator can create more operational users (privilege escalation). This is a regression from recent audit changes.",
+    "Optional: add a brute-force lockout on /api/auth/login (noted in iteration 1, still absent).",
+    "Optional: split server.py (>2400 lines) into routers for maintainability."
+  ],
+  "critical_code_review_comments": [
+    "server.py line 793-806 `crear_usuario_operativo` is NOT admin-gated — regression; this is the ONLY admin/* POST that uses `usuario_actual` instead of `requerir_admin`.",
+    "/api/procesos (line 438) correctly restricts non-admin to elections with assignments (via asignaciones_operativas lookup) — verified.",
+    "/api/procesos/{id}/anforas and /api/procesos/{id}/localizador-anforas correctly apply `_filtro_anforas_asignadas` on non-admin — verified only 1 of 2 anforas visible to operator/validator.",
+    "/api/resumen/{id}, /api/procesos/{id}/resultado-universitario are gated by `requerir_resultados` (admin|resultados) — operator & validator get 403 (verified).",
+    "/api/procesos/{id}/recintos, /mesas, /estructura, /agregacion are gated by `requerir_admin` — operator & validator get 403 (verified).",
+    "/api/imagenes/{path} correctly enforces: locked acta → public; unlocked acta → 401 without token, token revalidated via JWT and `_autorizar_anfora_operativa` for scope — logic verified by reading code; could not exercise the unlocked branch at runtime because no draft acta currently has `ruta_storage` (no OCR run, no admin upload performed per instructions).",
+    "/api/publico/procesos/{id}/actas/{id_anfora} returns 404 for anforas without a locked acta — verified (draft on the second anfora is NOT exposed).",
+    "Author-cannot-validate / self-cannot-block policy still enforced through `_autorizar_anfora_operativa` + funcion filtering — verified.",
+    "DELETE /api/admin/asignaciones-operativas/{id} is correctly admin-gated and verified in cleanup."
+  ],
+  "updated_files": [
+    "/app/backend/tests/backend_test.py (added TestSecurityRetest class with 20 parametrised cases; strengthened TestBolaRead.test_non_admin_cannot_create_users to use a valid payload that passes Pydantic validation so the auth gate is actually exercised)"
+  ],
+  "success_rate": {"backend": "92.7% (38/41, 2 skipped due to no image data, 1 fail = genuine SEC regression)", "frontend": "100% smoke (TREP desktop + resultados publicos desktop + mobile)"},
+  "test_credentials": "Admin gerabdevsoft@gmail.com/STRE_Admin_2026; Operador operador@stre.bo/Operador_2026; Validador validador@stre.bo/Validador_2026 — all working.",
+  "seed_data_creation": "Reused existing assignments (idempotent fixture: deletes operador/validador assignments for the election then recreates ONE carga + ONE validacion assignment on anforas[0] of UNIV-2026-BO-01). The locked acta from iteration 1 persisted; the suite ran a fresh draft→enviado→observado→enviado→bloqueado cycle on the same anfora. anforas[1] remains unassigned to prove isolation. Cleaned up 2 ‘evil’ test users created during the privilege-escalation probe (direct Mongo delete on x_*@stre.bo).",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Backend tests at /app/backend/tests/backend_test.py; pytest.ini pins -n 2 --dist loadscope. The DELETE-asignacion step in the `assignments` fixture is NOT xdist-safe (both workers try to delete the same doc); run serially with `-n 0` if you expand this suite. Image-token tests (test_image_endpoint_requires_token_for_non_locked, test_locked_acta_image_is_public_if_present) are skipped until the dataset contains an acta with `ruta_storage`; main agent should seed one via /api/admin/upload-imagen or OCR run (out of scope here). TestSecurityRetest covers everything in the review_request items 1-6 except image-token at runtime (code reviewed only).",
+  "rca of the issue": "Root cause of the privilege-escalation finding: during the recent security audit, the `/api/admin/usuarios-operativos` POST endpoint’s dependency was weakened from `requerir_admin` to `usuario_actual` (server.py line 796). All other `/api/admin/*` POSTs in the file use `requerir_admin`, so this is clearly a localised regression and not a design decision. Reproduction: `POST /api/auth/login` as operador@stre.bo, use the Bearer token on `POST /api/admin/usuarios-operativos` with a valid payload (contrasena ≥10 chars, nombre_completo ≥3 chars) → returns 200 + new user id. Mitigation: change the dependency to `admin: dict = Depends(requerir_admin)` and rename the local variable to avoid shadowing. After the fix, re-run `pytest backend/tests/backend_test.py::TestBolaRead::test_non_admin_cannot_create_users -n 0` — expected 403."
+}

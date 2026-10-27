@@ -1,0 +1,23 @@
+{
+  "summary": "Frontend-only retest of the TREP cascading-filter bug on /trep (UNIV-2026-BO-01). All 5 requested scenarios PASS, with no response interception. (1) Sucre > Derecho > Fac. Ciencia y Tecnología > Mesa 415 + '1' shows exactly Ánfora 1. (2) Incompatible branches (Sucre>Ciencia y tecnología, Sede Sucre, Monteagudo, Sede Monteagudo) + '1' show an empty list with the empty message. Sucre>Derecho+'999' is also empty. (3) The cascade is correct: the root selector shows only the 5 roots, labelled '<nombre_nivel>: <nombre_nodo>' (Ciudad: Sucre, Sede: Sede Sucre...). The child selector shows only Sucre's children. Recinto stays disabled until a terminal node is chosen and lists only the matching recinto. Mesa lists only Mesa 415. (4) Typing '1' in buscar-acta-publica after selecting the structure resets the node, recinto, mesa and structure-number filters and returns Ánfora 1, which opens its detail. (5) The DB md5 snapshot (nodos/recintos/mesas/anforas/actas) is identical before and after testing. The API now returns anfora.path_ancestros [Sucre, Derecho]. No JS page errors.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "DetalleActaPublica", "issue": "After an acta is opened, it stays shown in the detail panel when the filters change, even when the list is empty (e.g. Sucre>Derecho+'999'). Consider calling setActa(null) when the filters change.", "selector": "[data-testid='detalle-acta-publica']", "priority": "LOW"}
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "/trep structure filters", "issues": ["With 2 node levels plus recinto, mesa and number, there are 5 controls in a 4-column grid, so the number input wraps alone onto a second row.", "The level labels are inconsistent in the data ('FACULTAD' vs 'Facultad'). This is a data issue, not a UI issue."]}
+    ]
+  },
+  "test_report_links": [],
+  "action_items": ["Optional: clear the acta detail when the filters change", "Optional: improve the grid layout when there are more than 4 filter controls"],
+  "critical_code_review_comments": ["The number filter uses includes(), so '1' would also match 10, 11, 21, etc. With only one public acta this is not visible, but for exact search consider an exact or prefix match."],
+  "updated_files": [],
+  "success_rate": {"backend": "N/A (frontend only)", "frontend": "100% (5/5 scenarios)"},
+  "seed_data_creation": "None. No data created or modified; the DB hash snapshot is identical before and after.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "The iteration 8 bug is fixed. DB snapshot script: /tmp/snap.py. Hashes: nodos 43b8dd21..., recintos 69358620..., mesas 1888d94b..., anforas 936c7cb8..., actas e31662cb....",
+  "rca of the issue": "Fixed: localizador_publico_actas now projects path_ancestros for each anfora, so coincideRuta works."
+}
