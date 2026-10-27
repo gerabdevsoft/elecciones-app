@@ -15,6 +15,7 @@ import base64
 import asyncio
 import requests
 import re
+import unicodedata
 import random
 import bcrypt
 import jwt
@@ -49,7 +50,8 @@ JWT_ALGO = 'HS256'
 APP_NAME = os.environ.get('APP_NAME', 'stre-electoral')
 GCS_BUCKET_NAME = os.environ.get("GCS_BUCKET_NAME", "").strip()
 GCS_SERVICE_ACCOUNT_JSON = os.environ.get("GCS_SERVICE_ACCOUNT_JSON", "")
-VERTEX_AI_LOCATION = os.environ.get("VERTEX_AI_LOCATION", "us-central1").strip()
+DOCUMENT_AI_PROCESSOR_ID = os.environ.get("DOCUMENT_AI_PROCESSOR_ID", "").strip()
+DOCUMENT_AI_LOCATION = os.environ.get("DOCUMENT_AI_LOCATION", "").strip()
 
 # ------------- DB -------------
 mongo_client = AsyncIOMotorClient(MONGO_URL)
@@ -151,8 +153,17 @@ def obtener_objeto(ruta: str) -> tuple[bytes, str]:
         ) from e
 
 
-def _llamar_ocr_vertex(contenido: bytes, tipo_mime: str, instrucciones: str) -> str:
-    """Envía la imagen almacenada en GCS a Vertex AI y devuelve el texto JSON."""
+def _procesar_document_ai(contenido: bytes, tipo_mime: str) -> dict:
+    """Procesa con Document AI la imagen leída desde el bucket de Google Cloud."""
+    if not DOCUMENT_AI_PROCESSOR_ID or not DOCUMENT_AI_LOCATION:
+        raise RuntimeError(
+            "Configura DOCUMENT_AI_PROCESSOR_ID y DOCUMENT_AI_LOCATION para habilitar el OCR."
+        )
+    if not re.fullmatch(r"[a-z0-9-]+", DOCUMENT_AI_LOCATION):
+        raise RuntimeError("La ubicación del procesador Document AI no es válida.")
+    if not re.fullmatch(r"[a-zA-Z0-9-]+", DOCUMENT_AI_PROCESSOR_ID):
+        raise RuntimeError("El ID del procesador Document AI no es válido.")
+
     try:
         from google.auth.transport.requests import Request as GoogleAuthRequest
         from google.oauth2 import service_account
@@ -167,27 +178,14 @@ def _llamar_ocr_vertex(contenido: bytes, tipo_mime: str, instrucciones: str) -> 
         credenciales.refresh(GoogleAuthRequest())
 
         endpoint = (
-            f"https://{VERTEX_AI_LOCATION}-aiplatform.googleapis.com/v1/"
-            f"projects/{credenciales.project_id}/locations/{VERTEX_AI_LOCATION}/"
-            "publishers/google/models/gemini-2.5-flash:generateContent"
+            f"https://{DOCUMENT_AI_LOCATION}-documentai.googleapis.com/v1/"
+            f"projects/{credenciales.project_id}/locations/{DOCUMENT_AI_LOCATION}/"
+            f"processors/{DOCUMENT_AI_PROCESSOR_ID}:process"
         )
         solicitud = {
-            "contents": [{
-                "role": "user",
-                "parts": [
-                    {"text": instrucciones},
-                    {
-                        "inlineData": {
-                            "mimeType": tipo_mime,
-                            "data": base64.b64encode(contenido).decode("ascii"),
-                        }
-                    },
-                ],
-            }],
-            "generationConfig": {
-                "temperature": 0,
-                "maxOutputTokens": 4096,
-                "responseMimeType": "application/json",
+            "rawDocument": {
+                "content": base64.b64encode(contenido).decode("ascii"),
+                "mimeType": tipo_mime,
             },
         }
         respuesta = requests.post(
@@ -197,26 +195,184 @@ def _llamar_ocr_vertex(contenido: bytes, tipo_mime: str, instrucciones: str) -> 
             timeout=120,
         )
         if respuesta.status_code >= 400:
-            logger.error("Vertex AI respondió con HTTP %s durante el OCR", respuesta.status_code)
+            logger.error("Document AI respondió con HTTP %s durante el OCR", respuesta.status_code)
+            if respuesta.status_code == 403:
+                detalle = " Verifica que la API esté habilitada y que la cuenta de servicio tenga acceso al procesador."
+            elif respuesta.status_code == 404:
+                detalle = " Verifica el proyecto, la ubicación y el ID del procesador."
+            else:
+                detalle = ""
             raise RuntimeError(
-                f"Vertex AI respondió con HTTP {respuesta.status_code}. "
-                "Verifica que Vertex AI API esté habilitada y que la cuenta de servicio "
-                "tenga permiso para usar modelos."
+                f"Document AI respondió con HTTP {respuesta.status_code}.{detalle}"
             )
-        datos_respuesta = respuesta.json()
-        partes = datos_respuesta.get("candidates", [{}])[0].get("content", {}).get("parts", [])
-        texto = "".join(parte.get("text", "") for parte in partes)
-        if not texto:
-            raise RuntimeError("Vertex AI no devolvió resultados de OCR.")
-        return texto
+        documento = respuesta.json().get("document")
+        if not isinstance(documento, dict):
+            raise RuntimeError("Document AI no devolvió un documento procesado.")
+        return documento
     except RuntimeError:
         raise
     except Exception as e:
-        logger.error("No se pudo completar el OCR con Vertex AI: %s", type(e).__name__)
+        logger.error("No se pudo completar el OCR con Document AI: %s", type(e).__name__)
         raise RuntimeError(
-            "No se pudo conectar con Vertex AI. Verifica la configuración y los permisos "
+            "No se pudo conectar con Document AI. Verifica la configuración y los permisos "
             "de la cuenta de servicio de Google Cloud."
         ) from e
+
+
+def _normalizar_texto_ocr(texto: str) -> str:
+    sin_acentos = unicodedata.normalize("NFKD", texto or "")
+    return re.sub(r"[^a-z0-9]+", " ", sin_acentos.encode("ascii", "ignore").decode().lower()).strip()
+
+
+def _texto_de_layout(layout: dict, texto_completo: str) -> str:
+    segmentos = layout.get("textAnchor", {}).get("textSegments", [])
+    partes = []
+    for segmento in segmentos:
+        inicio = int(segmento.get("startIndex", 0))
+        fin = int(segmento.get("endIndex", inicio))
+        if fin > inicio:
+            partes.append(texto_completo[inicio:fin])
+    return " ".join(partes).strip()
+
+
+def _valor_entero(texto: str) -> Optional[int]:
+    numeros = re.findall(r"(?<!\d)\d{1,6}(?!\d)", texto or "")
+    if len(numeros) != 1:
+        return None
+    try:
+        return int(numeros[0])
+    except ValueError:
+        return None
+
+
+def _extraer_conteos_document_ai(documento: dict, franjas: list[dict]) -> tuple[list[dict], list[dict]]:
+    """Mapea campos y filas reconocidas cuando el nombre del candidato es explícito."""
+    texto_completo = documento.get("text", "")
+    paginas = documento.get("pages", [])
+    conteos = {
+        franja["id_franja"]: {
+            "id_franja": franja["id_franja"],
+            "votos_por_candidato": {},
+            "votos_blancos": None,
+            "votos_nulos": None,
+        }
+        for franja in franjas
+    }
+    campos_detectados = []
+
+    def asignar_valor(etiqueta: str, valor: str) -> None:
+        etiqueta_norm = _normalizar_texto_ocr(etiqueta)
+        valor_numero = _valor_entero(valor)
+        if valor_numero is None:
+            return
+        for franja in franjas:
+            for candidato in franja.get("candidatos", []):
+                nombre = _normalizar_texto_ocr(candidato.get("nombre", ""))
+                if len(nombre) >= 3 and nombre in etiqueta_norm:
+                    conteos[franja["id_franja"]]["votos_por_candidato"][candidato["id_candidato"]] = valor_numero
+                    return
+        es_blanco = "blanco" in etiqueta_norm
+        es_nulo = "nulo" in etiqueta_norm
+        if not (es_blanco or es_nulo):
+            return
+        franjas_coincidentes = [
+            franja for franja in franjas
+            if any(
+                indicador and indicador in etiqueta_norm
+                for indicador in (
+                    _normalizar_texto_ocr(franja.get("titulo", "")),
+                    _normalizar_texto_ocr(franja.get("nombre_papeleta", "")),
+                )
+            )
+        ]
+        if not franjas_coincidentes and len(franjas) == 1:
+            franjas_coincidentes = franjas
+        if len(franjas_coincidentes) == 1:
+            conteo = conteos[franjas_coincidentes[0]["id_franja"]]
+            conteo["votos_blancos" if es_blanco else "votos_nulos"] = valor_numero
+
+    for pagina in paginas:
+        for campo in pagina.get("formFields", []):
+            nombre = _texto_de_layout(campo.get("fieldName", {}), texto_completo)
+            valor = _texto_de_layout(campo.get("fieldValue", {}), texto_completo)
+            if nombre or valor:
+                campos_detectados.append({
+                    "nombre": nombre,
+                    "valor": valor,
+                    "confianza": campo.get("fieldValue", {}).get("confidence"),
+                })
+                asignar_valor(nombre, valor)
+
+        for tabla in pagina.get("tables", []):
+            encabezados = []
+            for fila in tabla.get("headerRows", []):
+                encabezados.append([
+                    _texto_de_layout(celda.get("layout", {}), texto_completo)
+                    for celda in fila.get("cells", [])
+                ])
+            encabezado = encabezados[-1] if encabezados else []
+            columnas_votos = [
+                indice for indice, celda in enumerate(encabezado)
+                if any(palabra in _normalizar_texto_ocr(celda) for palabra in ("voto", "total", "conteo"))
+            ]
+            for fila in tabla.get("bodyRows", []):
+                celdas = [
+                    _texto_de_layout(celda.get("layout", {}), texto_completo)
+                    for celda in fila.get("cells", [])
+                ]
+                fila_texto = " ".join(celdas)
+                if not fila_texto.strip():
+                    continue
+                for franja in franjas:
+                    salida = conteos[franja["id_franja"]]
+                    for candidato in franja.get("candidatos", []):
+                        nombre = _normalizar_texto_ocr(candidato.get("nombre", ""))
+                        if not nombre or len(nombre) < 3:
+                            continue
+                        celda_candidato = next(
+                            (i for i, celda in enumerate(celdas) if nombre in _normalizar_texto_ocr(celda)),
+                            None,
+                        )
+                        if celda_candidato is None:
+                            continue
+                        candidatos_valor = [
+                            columnas_votos[0]
+                        ] if columnas_votos else [
+                            i for i, celda in enumerate(celdas)
+                            if i != celda_candidato and _valor_entero(celda) is not None
+                        ]
+                        if len(candidatos_valor) == 1:
+                            indice_valor = candidatos_valor[0]
+                            if indice_valor < len(celdas):
+                                numero = _valor_entero(celdas[indice_valor])
+                                if numero is not None:
+                                    salida["votos_por_candidato"][candidato["id_candidato"]] = numero
+
+                etiqueta = celdas[0] if celdas else ""
+                if any(palabra in _normalizar_texto_ocr(etiqueta) for palabra in ("blanco", "nulo")):
+                    valor_celda = next(
+                        (celdas[i] for i in columnas_votos if i < len(celdas)),
+                        "",
+                    )
+                    if not valor_celda:
+                        numeros = [celda for celda in celdas[1:] if _valor_entero(celda) is not None]
+                        valor_celda = numeros[0] if len(numeros) == 1 else ""
+                    asignar_valor(etiqueta, valor_celda)
+
+    # Respaldo: algunas plantillas entregan el texto detectado sin tabla ni campos KVP.
+    for linea in texto_completo.splitlines():
+        for franja in franjas:
+            for candidato in franja.get("candidatos", []):
+                nombre = _normalizar_texto_ocr(candidato.get("nombre", ""))
+                if len(nombre) >= 3 and nombre in _normalizar_texto_ocr(linea):
+                    numero = _valor_entero(linea)
+                    if numero is not None:
+                        conteos[franja["id_franja"]]["votos_por_candidato"].setdefault(
+                            candidato["id_candidato"], numero
+                        )
+            asignar_valor(linea, linea)
+
+    return list(conteos.values()), campos_detectados
 
 
 # ------------- Auth Utils -------------
@@ -1549,7 +1705,7 @@ async def bitacora_global(admin: dict = Depends(requerir_admin)):
     salida.sort(key=lambda x: x.get("timestamp", ""), reverse=True)
     return salida
 
-# ------------- OCR con LLM -------------
+# ------------- OCR con Document AI -------------
 @api.post("/procesar-ocr")
 async def procesar_ocr(
     id_eleccion: str = Form(...),
@@ -1582,7 +1738,7 @@ async def procesar_ocr(
 
     url_publica = f"/api/imagenes/{ruta_final}"
 
-    # El OCR procesa la copia persistida en el bucket, sin usar servicios de Emergent.
+    # El OCR procesa la copia persistida en el bucket con Document AI.
     ocr_data = {}
     try:
         # Estructura esperada: candidatos por franja, blancos y nulos.
@@ -1593,60 +1749,32 @@ async def procesar_ocr(
             for f in p.get("franjas", []):
                 franjas.append({**f, "nombre_papeleta": p.get("nombre", "")})
 
-        estructura_txt = json.dumps([
-            {
-                "id_franja": f["id_franja"],
-                "papeleta": f["nombre_papeleta"],
-                "titulo": f["titulo"],
-                "candidatos": [{"id": c["id_candidato"], "nombre": c["nombre"], "sigla": c.get("sigla")} for c in f.get("candidatos", [])],
-                "permite_blancos": f.get("permite_blancos", True),
-                "permite_nulos": f.get("permite_nulos", True),
-            }
-            for f in franjas
-        ], ensure_ascii=False)
-
-        sistema = (
-            "Extrae solo los dígitos manuscritos para los candidatos, votos blancos y nulos "
-            "que coincidan con la estructura de la elección activa. Si un número es ilegible, "
-            "devuelve null. No inventes datos. Responde SOLO con JSON válido con el formato: "
-            '{"conteos":[{"id_franja":"...","votos_por_candidato":{"id_candidato":numero_o_null},'
-            '"votos_blancos":numero_o_null,"votos_nulos":numero_o_null}]}. '
-            f"Estructura activa: {estructura_txt}"
-        )
-
         contenido_guardado, mime_guardado = obtener_objeto(ruta_final)
-        respuesta_txt = await asyncio.to_thread(
-            _llamar_ocr_vertex,
+        documento = await asyncio.to_thread(
+            _procesar_document_ai,
             contenido_guardado,
             mime_guardado,
-            f"{sistema}\nProcesa esta acta electoral y devuelve los conteos en JSON estricto.",
         )
-
-        # Extraer JSON
-        txt = respuesta_txt.strip()
-        if "```" in txt:
-            partes = txt.split("```")
-            for p in partes:
-                p = p.strip()
-                if p.startswith("json"):
-                    p = p[4:].strip()
-                if p.startswith("{"):
-                    txt = p
-                    break
-        try:
-            ocr_data = json.loads(txt)
-        except Exception:
-            inicio = txt.find("{")
-            fin = txt.rfind("}")
-            if inicio >= 0 and fin > inicio:
-                try:
-                    ocr_data = json.loads(txt[inicio:fin+1])
-                except Exception:
-                    ocr_data = {"error": "Formato OCR inválido", "raw": respuesta_txt[:500]}
-            else:
-                ocr_data = {"error": "Sin JSON en respuesta OCR", "raw": respuesta_txt[:500]}
+        conteos_detectados, campos_detectados = _extraer_conteos_document_ai(documento, franjas)
+        cantidad_asignada = sum(
+            len(conteo["votos_por_candidato"])
+            + int(conteo["votos_blancos"] is not None)
+            + int(conteo["votos_nulos"] is not None)
+            for conteo in conteos_detectados
+        )
+        ocr_data = {
+            "conteos": conteos_detectados,
+            "conteos_detectados": cantidad_asignada,
+            "campos_detectados": campos_detectados[:100],
+            "texto_detectado": documento.get("text", "")[:12000],
+        }
+        if cantidad_asignada == 0:
+            ocr_data["aviso"] = (
+                "Document AI reconoció el acta, pero no pudo relacionar automáticamente "
+                "los campos con los candidatos. Revise el texto detectado y complete los votos."
+            )
     except Exception as e:
-        logger.error("Error OCR Vertex AI: %s", type(e).__name__)
+        logger.error("Error OCR Document AI: %s", type(e).__name__)
         ocr_data = {"error": str(e), "conteos": []}
 
     return {
