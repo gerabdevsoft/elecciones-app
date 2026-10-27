@@ -29,7 +29,7 @@ export default function ResultadosPublicosPage() {
   useEffect(() => { cargar(); }, [cargar]);
   useEffect(() => {
     if (!idEleccion) return undefined;
-    const base = process.env.REACT_APP_BACKEND_URL.replace(/^http/, "ws");
+    const base = (process.env.REACT_APP_BACKEND_URL || window.location.origin).replace(/^http/, "ws");
     const socket = new WebSocket(`${base}/api/ws/publico/${idEleccion}`);
     socket.onopen = () => setConexion("en vivo");
     socket.onmessage = () => cargar();

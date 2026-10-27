@@ -3257,7 +3257,8 @@ async def al_iniciar():
     await db.intentos_login.create_index("email")
     await db.intentos_login.create_index("creado_en", expireAfterSeconds=900)
     await seed_admin_y_operador()
-    await seed_procesos_demo()
+    if os.environ.get("SEED_DEMO_DATA", "false").lower() == "true":
+        await seed_procesos_demo()
     init_storage()
     logger.info("STRE backend listo")
 

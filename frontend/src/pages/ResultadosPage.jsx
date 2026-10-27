@@ -80,7 +80,7 @@ export default function ResultadosPage() {
   useEffect(() => {
     if (!procesoActivo || !usuario) return undefined;
     const token = localStorage.getItem("stre_token");
-    const base = process.env.REACT_APP_BACKEND_URL.replace(/^http/, "ws");
+    const base = (process.env.REACT_APP_BACKEND_URL || window.location.origin).replace(/^http/, "ws");
     const socket = new WebSocket(
       `${base}/api/ws/resultados/${procesoActivo.id_eleccion}`,
       token ? [token] : [],

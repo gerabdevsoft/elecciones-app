@@ -146,6 +146,18 @@ if (isDevServer) {
 
 const configureDevServer = webpackConfig.devServer;
 webpackConfig.devServer = (devServerConfig) =>
-  makeDevServerV5Compatible(configureDevServer(devServerConfig));
+  ({
+    ...makeDevServerV5Compatible(configureDevServer(devServerConfig)),
+    host: "0.0.0.0",
+    port: 5000,
+    allowedHosts: "all",
+    proxy: [
+      {
+        context: ["/api"],
+        target: "http://127.0.0.1:8000",
+        ws: true,
+      },
+    ],
+  });
 
 module.exports = webpackConfig;

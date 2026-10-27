@@ -1,9 +1,5 @@
 /.data/
-.replit
-replit.md
-replit.nix
 .config/
-start.sh
 
 # ==========================================
 # IDEs y Editores (Visual Studio / VS Code)

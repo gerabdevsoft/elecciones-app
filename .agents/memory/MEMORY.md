@@ -1,0 +1,1 @@
+- [Datos de demostración](demo-data-safety.md) — no activar el sembrado automático sobre una base existente: puede borrar procesos y actas de formato antiguo.
