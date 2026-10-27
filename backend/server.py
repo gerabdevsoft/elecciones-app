@@ -12,6 +12,8 @@ import uuid
 import json
 import logging
 import base64
+import asyncio
+import requests
 import re
 import random
 import bcrypt
@@ -44,10 +46,10 @@ MONGO_URL = os.environ['MONGO_URL']
 DB_NAME = os.environ['DB_NAME']
 JWT_SECRET = os.environ["JWT_SECRET"]
 JWT_ALGO = 'HS256'
-EMERGENT_LLM_KEY = os.environ.get('EMERGENT_LLM_KEY', '')
 APP_NAME = os.environ.get('APP_NAME', 'stre-electoral')
 GCS_BUCKET_NAME = os.environ.get("GCS_BUCKET_NAME", "").strip()
 GCS_SERVICE_ACCOUNT_JSON = os.environ.get("GCS_SERVICE_ACCOUNT_JSON", "")
+VERTEX_AI_LOCATION = os.environ.get("VERTEX_AI_LOCATION", "us-central1").strip()
 
 # ------------- DB -------------
 mongo_client = AsyncIOMotorClient(MONGO_URL)
@@ -147,6 +149,75 @@ def obtener_objeto(ruta: str) -> tuple[bytes, str]:
             503,
             "No se pudo leer la imagen desde el bucket de Google Cloud Storage.",
         ) from e
+
+
+def _llamar_ocr_vertex(contenido: bytes, tipo_mime: str, instrucciones: str) -> str:
+    """Envía la imagen almacenada en GCS a Vertex AI y devuelve el texto JSON."""
+    try:
+        from google.auth.transport.requests import Request as GoogleAuthRequest
+        from google.oauth2 import service_account
+
+        datos_cuenta = json.loads(GCS_SERVICE_ACCOUNT_JSON)
+        credenciales = service_account.Credentials.from_service_account_info(
+            datos_cuenta,
+            scopes=["https://www.googleapis.com/auth/cloud-platform"],
+        )
+        if not credenciales.project_id:
+            raise RuntimeError("La cuenta de servicio no incluye el ID del proyecto.")
+        credenciales.refresh(GoogleAuthRequest())
+
+        endpoint = (
+            f"https://{VERTEX_AI_LOCATION}-aiplatform.googleapis.com/v1/"
+            f"projects/{credenciales.project_id}/locations/{VERTEX_AI_LOCATION}/"
+            "publishers/google/models/gemini-2.5-flash:generateContent"
+        )
+        solicitud = {
+            "contents": [{
+                "role": "user",
+                "parts": [
+                    {"text": instrucciones},
+                    {
+                        "inlineData": {
+                            "mimeType": tipo_mime,
+                            "data": base64.b64encode(contenido).decode("ascii"),
+                        }
+                    },
+                ],
+            }],
+            "generationConfig": {
+                "temperature": 0,
+                "maxOutputTokens": 4096,
+                "responseMimeType": "application/json",
+            },
+        }
+        respuesta = requests.post(
+            endpoint,
+            headers={"Authorization": f"Bearer {credenciales.token}"},
+            json=solicitud,
+            timeout=120,
+        )
+        if respuesta.status_code >= 400:
+            logger.error("Vertex AI respondió con HTTP %s durante el OCR", respuesta.status_code)
+            raise RuntimeError(
+                f"Vertex AI respondió con HTTP {respuesta.status_code}. "
+                "Verifica que Vertex AI API esté habilitada y que la cuenta de servicio "
+                "tenga permiso para usar modelos."
+            )
+        datos_respuesta = respuesta.json()
+        partes = datos_respuesta.get("candidates", [{}])[0].get("content", {}).get("parts", [])
+        texto = "".join(parte.get("text", "") for parte in partes)
+        if not texto:
+            raise RuntimeError("Vertex AI no devolvió resultados de OCR.")
+        return texto
+    except RuntimeError:
+        raise
+    except Exception as e:
+        logger.error("No se pudo completar el OCR con Vertex AI: %s", type(e).__name__)
+        raise RuntimeError(
+            "No se pudo conectar con Vertex AI. Verifica la configuración y los permisos "
+            "de la cuenta de servicio de Google Cloud."
+        ) from e
+
 
 # ------------- Auth Utils -------------
 def hashear_contrasena(pw: str) -> str:
@@ -1496,7 +1567,7 @@ async def procesar_ocr(
     if len(contenido) == 0:
         raise HTTPException(400, "Archivo vacío")
 
-    # Guardar en Object Storage
+    # Guardar la fotografía del acta en Google Cloud Storage.
     ext = (archivo.filename or "acta.jpg").rsplit(".", 1)[-1].lower()
     if ext not in ("jpg", "jpeg", "png", "webp"):
         ext = "jpg"
@@ -1511,12 +1582,10 @@ async def procesar_ocr(
 
     url_publica = f"/api/imagenes/{ruta_final}"
 
-    # OCR con emergentintegrations
+    # El OCR procesa la copia persistida en el bucket, sin usar servicios de Emergent.
     ocr_data = {}
     try:
-        from emergentintegrations.llm.chat import LlmChat, UserMessage, ImageContent
-
-        # Estructura esperada: candidatos por FRANJA + blancos + nulos (recuento independiente)
+        # Estructura esperada: candidatos por franja, blancos y nulos.
         franjas = []
         for p in proc.get("papeletas", []):
             if id_papeleta and p["id_papeleta"] != id_papeleta:
@@ -1545,28 +1614,13 @@ async def procesar_ocr(
             f"Estructura activa: {estructura_txt}"
         )
 
-        b64 = base64.b64encode(contenido).decode()
-        chat = LlmChat(
-            api_key=EMERGENT_LLM_KEY,
-            session_id=f"ocr-{uuid.uuid4()}",
-            system_message=sistema,
-        ).with_model("openai", "gpt-5.4-mini")
-
-        msg = UserMessage(
-            text="Procesa esta acta electoral y devuelve los conteos en JSON estricto.",
-            file_contents=[ImageContent(image_base64=b64)]
+        contenido_guardado, mime_guardado = obtener_objeto(ruta_final)
+        respuesta_txt = await asyncio.to_thread(
+            _llamar_ocr_vertex,
+            contenido_guardado,
+            mime_guardado,
+            f"{sistema}\nProcesa esta acta electoral y devuelve los conteos en JSON estricto.",
         )
-        respuesta_txt = ""
-        try:
-            respuesta = await chat.send_message(msg)
-            respuesta_txt = str(respuesta)
-        except AttributeError:
-            from emergentintegrations.llm.chat import TextDelta, StreamDone
-            async for ev in chat.stream_message(msg):
-                if isinstance(ev, TextDelta):
-                    respuesta_txt += ev.content
-                elif isinstance(ev, StreamDone):
-                    break
 
         # Extraer JSON
         txt = respuesta_txt.strip()
@@ -1592,7 +1646,7 @@ async def procesar_ocr(
             else:
                 ocr_data = {"error": "Sin JSON en respuesta OCR", "raw": respuesta_txt[:500]}
     except Exception as e:
-        logger.error(f"Error OCR LLM: {e}")
+        logger.error("Error OCR Vertex AI: %s", type(e).__name__)
         ocr_data = {"error": str(e), "conteos": []}
 
     return {
