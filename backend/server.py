@@ -2969,6 +2969,7 @@ class AnforaMesa(BaseModel):
     id_recinto: str
     numero_anfora: str
     nombre: str
+    cantidad_votantes: Optional[int] = Field(default=None, ge=0)
     id_papeletas: List[str] = []
     color_hex: Optional[str] = None
     path_ancestros: List[dict] = []
@@ -2979,12 +2980,14 @@ class CrearAnforaReq(BaseModel):
     id_mesa: str
     numero_anfora: str
     nombre: str
+    cantidad_votantes: int = Field(ge=0)
     id_papeletas: List[str] = []
     color_hex: Optional[str] = None
 
 class ActualizarAnforaReq(BaseModel):
     numero_anfora: Optional[str] = None
     nombre: Optional[str] = None
+    cantidad_votantes: Optional[int] = Field(default=None, ge=0)
     id_papeletas: Optional[List[str]] = None
     color_hex: Optional[str] = None
 
@@ -3015,6 +3018,7 @@ async def admin_crear_anfora(id_eleccion: str, req: CrearAnforaReq, admin: dict 
     anf = AnforaMesa(
         id_eleccion=id_eleccion, id_mesa=req.id_mesa, id_recinto=mesa["id_recinto"],
         numero_anfora=numero_anfora, nombre=req.nombre,
+        cantidad_votantes=req.cantidad_votantes,
         id_papeletas=req.id_papeletas, color_hex=req.color_hex,
         path_ancestros=mesa.get("path_ancestros", []),
         path_texto=mesa.get("path_texto", ""),

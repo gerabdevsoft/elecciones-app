@@ -217,6 +217,8 @@ export default function EstructuraElectoralPage() {
                         Ánfora {a.numero_anfora} · <span className="font-normal">{a.nombre}</span>
                       </div>
                       <div className="text-[10px] font-data text-slate-500">
+                        {typeof a.cantidad_votantes === "number" ? `${a.cantidad_votantes} votantes` : "votantes sin registrar"}
+                        {" · "}
                         {papeletasNombres.length ? papeletasNombres.join(" + ") : "sin papeletas asignadas"}
                       </div>
                     </div>
@@ -348,6 +350,7 @@ function ModalAnfora({
       id_mesa: data.id_mesa,
       numero_anfora: "",
       nombre: "",
+      cantidad_votantes: "",
       id_papeletas: [],
       color_hex: "#D97706",
     },
@@ -356,6 +359,10 @@ function ModalAnfora({
   const usadasEnOtras = new Set(
     anforasMismaMesa.filter((a) => a.id !== (editar?.id)).flatMap((a) => a.id_papeletas || [])
   );
+  const cantidadIngresada = form.cantidad_votantes !== "" && form.cantidad_votantes != null;
+  const cantidadValida =
+    !cantidadIngresada ||
+    (Number.isInteger(Number(form.cantidad_votantes)) && Number(form.cantidad_votantes) >= 0);
   const togglePapeleta = (idp) => {
     setForm((f) => ({
       ...f,
@@ -369,11 +376,15 @@ function ModalAnfora({
         await api.put(`/admin/procesos/${id_eleccion}/anforas/${editar.id}`, {
           numero_anfora: form.numero_anfora,
           nombre: form.nombre,
+          cantidad_votantes: cantidadIngresada ? Number(form.cantidad_votantes) : null,
           id_papeletas: form.id_papeletas,
           color_hex: form.color_hex,
         });
       } else {
-        await api.post(`/admin/procesos/${id_eleccion}/anforas`, form);
+        await api.post(`/admin/procesos/${id_eleccion}/anforas`, {
+          ...form,
+          cantidad_votantes: Number(form.cantidad_votantes),
+        });
       }
       toast.success(editar ? "Ánfora actualizada" : "Ánfora creada");
       onOk();
@@ -392,6 +403,20 @@ function ModalAnfora({
             <div className="col-span-2"><Label className="text-xs uppercase tracking-widest">Nombre / Etiqueta</Label>
               <Input value={form.nombre} onChange={(e) => setForm({ ...form, nombre: e.target.value })} placeholder="Ánfora Presidencial" data-testid="input-nombre-anfora" />
             </div>
+          </div>
+          <div>
+            <Label htmlFor="cantidad-votantes-anfora" className="text-xs uppercase tracking-widest">Cantidad de votantes</Label>
+            <Input
+              id="cantidad-votantes-anfora"
+              type="number"
+              min="0"
+              step="1"
+              inputMode="numeric"
+              value={form.cantidad_votantes ?? ""}
+              onChange={(e) => setForm({ ...form, cantidad_votantes: e.target.value })}
+              placeholder="Ej. 250"
+              data-testid="input-cantidad-votantes-anfora"
+            />
           </div>
           <div>
             <Label className="text-xs uppercase tracking-widest">Color de identificación</Label>
@@ -431,7 +456,9 @@ function ModalAnfora({
             disabled={
               enviando ||
               !form.numero_anfora ||
-              !form.nombre
+              !form.nombre ||
+              !cantidadValida ||
+              (!editar && !cantidadIngresada)
             }
             data-testid="btn-guardar-anfora"
           >
