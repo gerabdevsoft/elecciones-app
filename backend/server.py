@@ -1962,14 +1962,22 @@ def _actas_unicas_por_anfora(actas: List[dict]) -> List[dict]:
     return [*por_anfora.values(), *sin_anfora]
 
 
-def _clave_orden_mesa(mesa: dict) -> tuple:
-    numero = str(mesa.get("numero_mesa", "")).strip().casefold()
+def _clave_orden_natural(registro: dict, campo: str) -> tuple:
+    numero = str(registro.get(campo, "")).strip().casefold()
     partes = re.split(r"(\d+)", numero)
     clave_natural = tuple(
         (0, int(parte)) if parte.isdigit() else (1, parte)
         for parte in partes
     )
     return clave_natural, numero
+
+
+def _clave_orden_mesa(mesa: dict) -> tuple:
+    return _clave_orden_natural(mesa, "numero_mesa")
+
+
+def _clave_orden_anfora(anfora: dict) -> tuple:
+    return _clave_orden_natural(anfora, "numero_anfora")
 
 
 async def _consolidado_publico(id_eleccion: str) -> dict:
@@ -2073,7 +2081,8 @@ async def localizador_publico_actas(id_eleccion: str):
             "nombre": 1,
             "path_ancestros": 1,
         },
-    ).sort("numero_anfora", 1).to_list(20000)
+    ).to_list(20000)
+    anforas.sort(key=_clave_orden_anfora)
     ids_mesa = list({anfora["id_mesa"] for anfora in anforas})
     ids_recinto = list({anfora["id_recinto"] for anfora in anforas})
     mesas = await db.mesas_sufragio.find(
@@ -3088,7 +3097,8 @@ async def listar_anforas(
     if numero_anfora:
         termino = re.escape(numero_anfora.strip()[:80])
         q["numero_anfora"] = {"$regex": termino, "$options": "i"}
-    anforas = await db.anforas_mesa.find(q, {"_id": 0}).sort("numero_anfora", 1).to_list(20000)
+    anforas = await db.anforas_mesa.find(q, {"_id": 0}).to_list(20000)
+    anforas.sort(key=_clave_orden_anfora)
     return anforas
 
 
@@ -3105,7 +3115,8 @@ async def obtener_localizador_anforas(
     anforas = await db.anforas_mesa.find(
         filtro_anforas,
         {"_id": 0},
-    ).sort("numero_anfora", 1).to_list(20000)
+    ).to_list(20000)
+    anforas.sort(key=_clave_orden_anfora)
     actas = await db.actas.find(
         {"id_eleccion": id_eleccion, "id_anfora": {"$in": [anfora["id"] for anfora in anforas]}},
         {"_id": 0, "id_anfora": 1, "estado": 1, "esta_bloqueada": 1, "conteos": 1, "actualizado_en": 1},
@@ -3349,7 +3360,8 @@ async def obtener_estructura_completa(id_eleccion: str, admin: dict = Depends(re
     for r in recintos:
         r["total_mesas"] = conteo_mesas_por_recinto.get(r["id"], 0)
     campos = await db.definiciones_campo_mesa.find({"id_eleccion": id_eleccion}, {"_id": 0}).sort("orden", 1).to_list(500)
-    anforas = await db.anforas_mesa.find({"id_eleccion": id_eleccion}, {"_id": 0}).sort("numero_anfora", 1).to_list(20000)
+    anforas = await db.anforas_mesa.find({"id_eleccion": id_eleccion}, {"_id": 0}).to_list(20000)
+    anforas.sort(key=_clave_orden_anfora)
     proc = await db.procesos_electorales.find_one(
         {"id_eleccion": id_eleccion},
         {"_id": 0, "papeletas": 1, "tipo": 1},

@@ -3,9 +3,17 @@ const comparadorNatural = new Intl.Collator("es", {
   sensitivity: "base",
 });
 
-export function ordenarMesasNumericamente(mesas = []) {
-  return [...mesas].sort((a, b) => (
-    comparadorNatural.compare(String(a.numero_mesa ?? ""), String(b.numero_mesa ?? "")) ||
+function ordenarPorNumeroNatural(elementos, campo) {
+  return [...elementos].sort((a, b) => (
+    comparadorNatural.compare(String(a[campo] ?? ""), String(b[campo] ?? "")) ||
     String(a.id ?? "").localeCompare(String(b.id ?? ""))
   ));
+}
+
+export function ordenarMesasNumericamente(mesas = []) {
+  return ordenarPorNumeroNatural(mesas, "numero_mesa");
+}
+
+export function ordenarAnforasNumericamente(anforas = []) {
+  return ordenarPorNumeroNatural(anforas, "numero_anfora");
 }

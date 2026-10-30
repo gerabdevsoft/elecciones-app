@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef } from "react";
 import { api, formatearError } from "@/lib/api";
-import { ordenarMesasNumericamente } from "@/lib/sorting";
+import { ordenarAnforasNumericamente, ordenarMesasNumericamente } from "@/lib/sorting";
 import { useAuth } from "@/context/AuthContext";
 import { comprimirImagenActa } from "@/lib/imageCompress";
 import { Button } from "@/components/ui/button";
@@ -706,15 +706,15 @@ function LocalizadorAnfora({
   const mesas = ordenarMesasNumericamente(
     (data.mesas || []).filter((mesa) => !idRecinto || mesa.id_recinto === idRecinto)
   );
-  const anforasJerarquia = (data.anforas || []).filter((anfora) => {
+  const anforasJerarquia = ordenarAnforasNumericamente((data.anforas || []).filter((anfora) => {
     const coincideNodo = !idNodo || (anfora.path_ancestros || []).some((nodo) => nodo.id === idNodo);
     const coincideRecinto = !idRecinto || anfora.id_recinto === idRecinto;
     const coincideMesa = !idMesa || anfora.id_mesa === idMesa;
     return coincideNodo && coincideRecinto && coincideMesa;
-  });
-  const anforasDirectas = (data.anforas || []).filter((anfora) => (
+  }));
+  const anforasDirectas = ordenarAnforasNumericamente((data.anforas || []).filter((anfora) => (
     String(anfora.numero_anfora).toLowerCase().includes(numero.trim().toLowerCase())
-  ));
+  )));
   const hayBusqueda = Boolean(numero.trim() || idNodo);
   const resultados = numero.trim() ? anforasDirectas : anforasJerarquia;
 
