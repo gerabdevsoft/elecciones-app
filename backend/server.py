@@ -772,20 +772,18 @@ async def _asignaciones_operativas_usuario(
 
 
 def _filtro_anforas_asignadas(asignaciones: List[dict]) -> dict:
-    nodos = set()
-    recintos = set()
-    anforas = set()
-    for asignacion in asignaciones:
-        nodos.update(asignacion.get("id_nodos", []))
-        recintos.update(asignacion.get("id_recintos", []))
-        anforas.update(asignacion.get("id_anforas", []))
+    """Aplica el nivel más específico de cada asignación: ánfora, recinto o nodo."""
     condiciones = []
-    if nodos:
-        condiciones.append({"path_ancestros.id": {"$in": list(nodos)}})
-    if recintos:
-        condiciones.append({"id_recinto": {"$in": list(recintos)}})
-    if anforas:
-        condiciones.append({"id": {"$in": list(anforas)}})
+    for asignacion in asignaciones:
+        anforas = list(dict.fromkeys(asignacion.get("id_anforas", [])))
+        recintos = list(dict.fromkeys(asignacion.get("id_recintos", [])))
+        nodos = list(dict.fromkeys(asignacion.get("id_nodos", [])))
+        if anforas:
+            condiciones.append({"id": {"$in": anforas}})
+        elif recintos:
+            condiciones.append({"id_recinto": {"$in": recintos}})
+        elif nodos:
+            condiciones.append({"path_ancestros.id": {"$in": nodos}})
     return {"$or": condiciones} if condiciones else {"id": {"$in": []}}
 
 
