@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from "react";
+import { useCallback, useEffect, useState, useRef } from "react";
 import { api, formatearError } from "@/lib/api";
 import { ordenarAnforasNumericamente, ordenarMesasNumericamente } from "@/lib/sorting";
 import { useAuth } from "@/context/AuthContext";
@@ -50,6 +50,8 @@ export default function CentroComputoPage() {
   const { usuario, procesoActivo } = useAuth();
   const [permisos, setPermisos] = useState(null);
   const [localizador, setLocalizador] = useState(null);
+  const [cargandoLocalizador, setCargandoLocalizador] = useState(true);
+  const [errorLocalizador, setErrorLocalizador] = useState("");
   const [anforaSeleccionada, setAnforaSeleccionada] = useState(null);
   const [actaActual, setActaActual] = useState(null);
   const [meta, setMeta] = useState({ departamento: "La Paz", ciudad: "La Paz", recinto: "", ambiente: "", numero_anfora: "" });
@@ -107,34 +109,51 @@ export default function CentroComputoPage() {
       if (urlTemporal) URL.revokeObjectURL(urlTemporal);
     };
   }, [urlImagen]);
-  useEffect(() => {
-    if (!procesoActivo) return;
-    setConteos({});
-    setAnforaSeleccionada(null);
-    setActaActual(null);
-    cargarLocalizador();
-    cargarPermisos();
-  }, [procesoActivo?.id_eleccion]);
-
-  const cargarPermisos = async () => {
+  const cargarPermisos = useCallback(async () => {
+    if (!procesoActivo?.id_eleccion) return;
     try {
       const { data } = await api.get(`/operacion/procesos/${procesoActivo.id_eleccion}/permisos`);
       setPermisos(data);
     } catch (e) {
       setPermisos({ puede_cargar: false, puede_validar: false, es_admin: false });
     }
-  };
+  }, [procesoActivo?.id_eleccion]);
 
-  const cargarLocalizador = async () => {
+  const cargarLocalizador = useCallback(async () => {
+    if (!procesoActivo?.id_eleccion) return;
+    setCargandoLocalizador(true);
+    setErrorLocalizador("");
     try {
       const { data } = await api.get(
         `/procesos/${procesoActivo.id_eleccion}/localizador-anforas`,
+        { timeout: 30000 },
       );
+      if (!data || !Array.isArray(data.anforas) || !Array.isArray(data.mesas)) {
+        throw new Error("El servidor devolvió datos incompletos para el localizador.");
+      }
       setLocalizador(data);
     } catch (e) {
-      toast.error(formatearError(e?.response?.data?.detail));
+      const detalle = e?.response?.data?.detail;
+      setErrorLocalizador(
+        detalle
+          ? formatearError(detalle)
+          : e?.message || "No fue posible cargar los datos del localizador.",
+      );
+    } finally {
+      setCargandoLocalizador(false);
     }
-  };
+  }, [procesoActivo?.id_eleccion]);
+
+  useEffect(() => {
+    if (!procesoActivo?.id_eleccion) return;
+    setConteos({});
+    setAnforaSeleccionada(null);
+    setActaActual(null);
+    setLocalizador(null);
+    setErrorLocalizador("");
+    cargarLocalizador();
+    cargarPermisos();
+  }, [procesoActivo?.id_eleccion, cargarLocalizador, cargarPermisos]);
 
   const seleccionarAnfora = async (anfora) => {
     const idSolicitud = solicitudAnforaRef.current + 1;
@@ -387,6 +406,9 @@ export default function CentroComputoPage() {
       <LocalizadorAnfora
         key={procesoActivo.id_eleccion}
         data={localizador}
+        cargando={cargandoLocalizador}
+        error={errorLocalizador}
+        onReintentar={cargarLocalizador}
         anforaSeleccionada={anforaSeleccionada}
         onSeleccionar={seleccionarAnfora}
         onLimpiarSeleccion={limpiarSeleccionAnfora}
@@ -681,6 +703,9 @@ export default function CentroComputoPage() {
 
 function LocalizadorAnfora({
   data,
+  cargando,
+  error,
+  onReintentar,
   anforaSeleccionada,
   onSeleccionar,
   onLimpiarSeleccion,
@@ -690,10 +715,21 @@ function LocalizadorAnfora({
   const [idRecinto, setIdRecinto] = useState("");
   const [idMesa, setIdMesa] = useState("");
 
-  if (!data) {
+  if (cargando) {
     return (
       <div className="border border-slate-200 bg-white p-6 text-sm text-slate-500" data-testid="cargando-localizador-anfora">
         Cargando localizador de ánforas…
+      </div>
+    );
+  }
+
+  if (error || !data) {
+    return (
+      <div className="flex flex-wrap items-center justify-between gap-3 border border-red-200 bg-red-50 p-5 text-sm text-red-800" data-testid="error-localizador-anfora">
+        <span>{error || "No se recibieron los datos del localizador."}</span>
+        <Button variant="outline" size="sm" onClick={onReintentar} data-testid="reintentar-localizador-anfora">
+          Reintentar
+        </Button>
       </div>
     );
   }
