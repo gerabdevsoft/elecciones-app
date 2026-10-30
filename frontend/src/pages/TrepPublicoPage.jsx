@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "@/lib/api";
+import { ordenarMesasNumericamente } from "@/lib/sorting";
 import { FileImage, Search, Vote } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -73,9 +74,9 @@ export default function TrepPublicoPage() {
   const recintos = useMemo(() => (localizador?.recintos || []).filter((recinto) => (
     puedeFiltrarRecintos && recinto.id_nodo_padre === idNodoTerminal
   )), [idNodoTerminal, localizador, puedeFiltrarRecintos]);
-  const mesas = useMemo(() => (localizador?.mesas || []).filter((mesa) => (
-    !idRecinto || mesa.id_recinto === idRecinto
-  )), [localizador, idRecinto]);
+  const mesas = useMemo(() => ordenarMesasNumericamente(
+    (localizador?.mesas || []).filter((mesa) => !idRecinto || mesa.id_recinto === idRecinto)
+  ), [localizador, idRecinto]);
   const anforas = useMemo(() => (localizador?.anforas || []).filter((anfora) => {
     const coincideDirecta = numeroDirecto.trim()
       ? String(anfora.numero_anfora) === numeroDirecto.trim()

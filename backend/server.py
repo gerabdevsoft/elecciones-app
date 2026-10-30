@@ -1962,6 +1962,16 @@ def _actas_unicas_por_anfora(actas: List[dict]) -> List[dict]:
     return [*por_anfora.values(), *sin_anfora]
 
 
+def _clave_orden_mesa(mesa: dict) -> tuple:
+    numero = str(mesa.get("numero_mesa", "")).strip().casefold()
+    partes = re.split(r"(\d+)", numero)
+    clave_natural = tuple(
+        (0, int(parte)) if parte.isdigit() else (1, parte)
+        for parte in partes
+    )
+    return clave_natural, numero
+
+
 async def _consolidado_publico(id_eleccion: str) -> dict:
     proceso = await db.procesos_electorales.find_one(
         {"id_eleccion": id_eleccion, "activo": True},
@@ -2071,6 +2081,7 @@ async def localizador_publico_actas(id_eleccion: str):
         {"_id": 0, "id": 1, "id_recinto": 1, "numero_mesa": 1, "tipo_mesa": 1, "path_ancestros": 1},
     ).to_list(20000)
     mesas = await _sincronizar_tipo_mesa_legado(id_eleccion, mesas)
+    mesas.sort(key=_clave_orden_mesa)
     recintos = await db.recintos_electorales.find(
         {"id_eleccion": id_eleccion, "id": {"$in": ids_recinto}},
         {"_id": 0, "id": 1, "id_nodo_padre": 1, "nombre": 1, "path_ancestros": 1},
@@ -3119,6 +3130,7 @@ async def obtener_localizador_anforas(
         {"_id": 0},
     ).to_list(20000)
     mesas = await _sincronizar_tipo_mesa_legado(id_eleccion, mesas)
+    mesas.sort(key=_clave_orden_mesa)
     tipo_por_mesa = {mesa["id"]: mesa.get("tipo_mesa") for mesa in mesas}
     for anfora in anforas:
         anfora["tipo_mesa"] = tipo_por_mesa.get(anfora.get("id_mesa"))
@@ -3312,8 +3324,9 @@ async def listar_mesas(
             if "=" in par:
                 k, v = par.split("=", 1)
                 q[f"metadatos.{k.strip()}"] = v.strip()
-    mesas = await db.mesas_sufragio.find(q, {"_id": 0}).sort("numero_mesa", 1).to_list(20000)
+    mesas = await db.mesas_sufragio.find(q, {"_id": 0}).to_list(20000)
     mesas = await _sincronizar_tipo_mesa_legado(id_eleccion, mesas)
+    mesas.sort(key=_clave_orden_mesa)
     return mesas
 
 @api.get("/procesos/{id_eleccion}/campos-mesa")

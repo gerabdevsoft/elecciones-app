@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useParams, Link } from "react-router-dom";
 import { api, formatearError } from "@/lib/api";
+import { ordenarMesasNumericamente } from "@/lib/sorting";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -149,7 +150,7 @@ export default function EstructuraElectoralPage() {
   const renderRecinto = (rec, nivel) => {
     const abierto = expandidos[`r-${rec.id}`];
     const activo = seleccion?.tipo === "recinto" && seleccion.id === rec.id;
-    const mesas = mesasRecinto[rec.id] || [];
+    const mesas = ordenarMesasNumericamente(mesasRecinto[rec.id] || []);
     return (
       <div key={rec.id}>
         <div className={`flex items-center gap-1 py-1.5 pr-2 rounded-md ${activo ? "bg-[#F5F3FF]" : "hover:bg-slate-50"}`}
