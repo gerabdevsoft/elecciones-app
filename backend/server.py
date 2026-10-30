@@ -2098,20 +2098,45 @@ async def localizador_publico_actas(id_eleccion: str):
         },
     ).to_list(20000)
     anforas.sort(key=_clave_orden_anfora)
-    ids_mesa = list({anfora["id_mesa"] for anfora in anforas})
-    ids_recinto = list({anfora["id_recinto"] for anfora in anforas})
+    anforas_estructura = await db.anforas_mesa.find(
+        {"id_eleccion": id_eleccion},
+        {"_id": 0, "id_mesa": 1, "id_recinto": 1, "tipo_mesa": 1},
+    ).to_list(20000)
+    ids_mesa = list({
+        anfora["id_mesa"] for anfora in anforas_estructura if anfora.get("id_mesa")
+    })
+    ids_recinto = list({
+        anfora["id_recinto"] for anfora in anforas_estructura if anfora.get("id_recinto")
+    })
     mesas = await db.mesas_sufragio.find(
         {"id_eleccion": id_eleccion, "id": {"$in": ids_mesa}},
         {"_id": 0, "id": 1, "id_recinto": 1, "numero_mesa": 1, "tipo_mesa": 1, "path_ancestros": 1},
     ).to_list(20000)
-    mesas = await _sincronizar_tipo_mesa_legado(id_eleccion, mesas)
+    actas_estructura = await db.actas.find(
+        {"id_eleccion": id_eleccion, "id_mesa": {"$in": ids_mesa}},
+        {"_id": 0, "id_mesa": 1, "tipo_mesa": 1},
+    ).to_list(20000)
+    tipos_legacy_por_mesa = {}
+    for registro in [*anforas_estructura, *actas_estructura]:
+        tipo = registro.get("tipo_mesa")
+        id_mesa = registro.get("id_mesa")
+        if id_mesa and tipo in {"docente", "estudiante"}:
+            tipos_legacy_por_mesa.setdefault(id_mesa, set()).add(tipo)
+    for mesa in mesas:
+        if mesa.get("tipo_mesa") not in {"docente", "estudiante"}:
+            tipos_legacy = tipos_legacy_por_mesa.get(mesa["id"], set())
+            mesa["tipo_mesa"] = next(iter(tipos_legacy)) if len(tipos_legacy) == 1 else None
     mesas.sort(key=_clave_orden_mesa)
     recintos = await db.recintos_electorales.find(
         {"id_eleccion": id_eleccion, "id": {"$in": ids_recinto}},
         {"_id": 0, "id": 1, "id_nodo_padre": 1, "nombre": 1, "path_ancestros": 1},
     ).to_list(5000)
+    ids_nodo = set()
+    for recinto in recintos:
+        ids_nodo.add(recinto.get("id_nodo_padre"))
+        ids_nodo.update(nodo.get("id") for nodo in recinto.get("path_ancestros", []))
     nodos = await db.nodos_jerarquicos.find(
-        {"id_eleccion": id_eleccion},
+        {"id_eleccion": id_eleccion, "id": {"$in": list(ids_nodo - {None})}},
         {"_id": 0, "id": 1, "id_padre": 1, "nombre_nivel": 1, "nombre_nodo": 1},
     ).to_list(5000)
     return {"nodos": nodos, "recintos": recintos, "mesas": mesas, "anforas": anforas}
@@ -3242,7 +3267,14 @@ async def obtener_localizador_anforas(
         ids_nodo.update(nodo.get("id") for nodo in recinto.get("path_ancestros", []))
     nodos = await db.nodos_jerarquicos.find(
         {"id_eleccion": id_eleccion, "id": {"$in": list(ids_nodo - {None})}},
-        {"_id": 0, "id": 1, "nombre_nodo": 1, "es_hoja_configurada": 1},
+        {
+            "_id": 0,
+            "id": 1,
+            "id_padre": 1,
+            "nombre_nivel": 1,
+            "nombre_nodo": 1,
+            "es_hoja_configurada": 1,
+        },
     ).to_list(5000)
     return {
         "nodos": nodos,

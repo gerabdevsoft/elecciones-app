@@ -1,7 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "@/lib/api";
-import { ordenarMesasNumericamente } from "@/lib/sorting";
+import {
+  ordenarMesasNumericamente,
+  ordenarNodosAlfabeticamente,
+  ordenarRecintosAlfabeticamente,
+} from "@/lib/sorting";
 import { FileImage, Search, Vote } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -51,11 +55,13 @@ export default function TrepPublicoPage() {
     let indice = 0;
 
     while (true) {
-      const nodosNivel = nodos.filter((nodo) => (nodo.id_padre || null) === idPadre);
+      const nodosNivel = ordenarNodosAlfabeticamente(
+        nodos.filter((nodo) => (nodo.id_padre || null) === idPadre)
+      );
       if (!nodosNivel.length) break;
       niveles.push({
         indice,
-        etiqueta: nodosNivel[0].nombre_nivel || "Nivel electoral",
+        etiqueta: nodosNivel[0].nombre_nivel || "Estructura electoral",
         nodos: nodosNivel,
       });
       const idSeleccionado = rutaNodos[indice];
@@ -67,19 +73,19 @@ export default function TrepPublicoPage() {
   }, [localizador, rutaNodos]);
 
   const idNodoTerminal = rutaNodos.at(-1) || "";
-  const nodoTieneHijos = (localizador?.nodos || []).some((nodo) => (
-    nodo.id_padre === idNodoTerminal
-  ));
-  const puedeFiltrarRecintos = Boolean(idNodoTerminal) && !nodoTieneHijos;
-  const recintos = useMemo(() => (localizador?.recintos || []).filter((recinto) => (
-    puedeFiltrarRecintos && recinto.id_nodo_padre === idNodoTerminal
-  )), [idNodoTerminal, localizador, puedeFiltrarRecintos]);
+  const recintos = useMemo(() => ordenarRecintosAlfabeticamente(
+    (localizador?.recintos || []).filter((recinto) => (
+      !idNodoTerminal ||
+      recinto.id_nodo_padre === idNodoTerminal ||
+      (recinto.path_ancestros || []).some((nodo) => nodo.id === idNodoTerminal)
+    ))
+  ), [idNodoTerminal, localizador]);
   const mesas = useMemo(() => ordenarMesasNumericamente(
     (localizador?.mesas || []).filter((mesa) => !idRecinto || mesa.id_recinto === idRecinto)
   ), [localizador, idRecinto]);
   const anforas = useMemo(() => (localizador?.anforas || []).filter((anfora) => {
     const coincideDirecta = numeroDirecto.trim()
-      ? String(anfora.numero_anfora) === numeroDirecto.trim()
+      ? String(anfora.numero_anfora).toLowerCase().includes(numeroDirecto.trim().toLowerCase())
       : true;
     const coincideRuta = rutaNodos.every((idNodo) => (
       (anfora.path_ancestros || []).some((nodo) => nodo.id === idNodo)
@@ -157,10 +163,10 @@ export default function TrepPublicoPage() {
               {nivelesNodos.map((nivel) => (
                 <Select key={nivel.indice} value={rutaNodos[nivel.indice] || ""} onValueChange={(valor) => seleccionarNodo(nivel.indice, valor)}>
                   <SelectTrigger data-testid={`filtro-publico-nodo-${nivel.indice}`}><SelectValue placeholder={nivel.etiqueta} /></SelectTrigger>
-                  <SelectContent>{nivel.nodos.map((nodo) => <SelectItem key={nodo.id} value={nodo.id}>{nodo.nombre_nivel}: {nodo.nombre_nodo}</SelectItem>)}</SelectContent>
+                  <SelectContent>{nivel.nodos.map((nodo) => <SelectItem key={nodo.id} value={nodo.id}>{nodo.nombre_nodo}</SelectItem>)}</SelectContent>
                 </Select>
               ))}
-              <Select value={idRecinto} onValueChange={(valor) => { setIdRecinto(valor); setIdMesa(""); setNumeroEstructura(""); setNumeroDirecto(""); }} disabled={!puedeFiltrarRecintos}>
+              <Select value={idRecinto} onValueChange={(valor) => { setIdRecinto(valor); setIdMesa(""); setNumeroEstructura(""); setNumeroDirecto(""); }} disabled={!idNodoTerminal}>
                 <SelectTrigger data-testid="filtro-publico-recinto"><SelectValue placeholder="Recinto" /></SelectTrigger>
                 <SelectContent>{recintos.map((recinto) => <SelectItem key={recinto.id} value={recinto.id}>{recinto.nombre}</SelectItem>)}</SelectContent>
               </Select>
@@ -170,11 +176,6 @@ export default function TrepPublicoPage() {
               </Select>
               <Input value={numeroEstructura} onChange={(evento) => { setNumeroEstructura(evento.target.value); setNumeroDirecto(""); }} placeholder="N° de ánfora" className={`font-data ${nivelesNodos.length > 1 ? "md:col-span-2 xl:col-span-1" : ""}`} disabled={!idNodoTerminal} data-testid="buscar-anfora-en-estructura" />
             </div>
-            {idNodoTerminal && puedeFiltrarRecintos && recintos.length === 0 && (
-              <div className="mt-3 text-xs text-slate-500" data-testid="sin-recintos-publicos">
-                No existen recintos con actas consolidadas para este nodo terminal.
-              </div>
-            )}
           </div>
         </section>
 

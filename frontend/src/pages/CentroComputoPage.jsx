@@ -3,6 +3,7 @@ import { api, formatearError } from "@/lib/api";
 import {
   ordenarAnforasNumericamente,
   ordenarMesasNumericamente,
+  ordenarNodosAlfabeticamente,
   ordenarRecintosAlfabeticamente,
 } from "@/lib/sorting";
 import { useAuth } from "@/context/AuthContext";
@@ -721,7 +722,7 @@ function LocalizadorAnfora({
   onLimpiarSeleccion,
 }) {
   const [numero, setNumero] = useState("");
-  const [idNodo, setIdNodo] = useState("");
+  const [rutaNodos, setRutaNodos] = useState([]);
   const [idRecinto, setIdRecinto] = useState("");
   const [idMesa, setIdMesa] = useState("");
 
@@ -744,6 +745,24 @@ function LocalizadorAnfora({
     );
   }
 
+  const nivelesNodos = [];
+  let idPadre = null;
+  let indiceNivel = 0;
+  while (true) {
+    const nodosNivel = ordenarNodosAlfabeticamente((data.nodos || [])
+      .filter((nodo) => (nodo.id_padre || null) === idPadre));
+    if (nodosNivel.length === 0) break;
+    nivelesNodos.push({
+      indice: indiceNivel,
+      etiqueta: nodosNivel[0].nombre_nivel || "Estructura electoral",
+      nodos: nodosNivel,
+    });
+    const idSeleccionado = rutaNodos[indiceNivel];
+    if (!idSeleccionado) break;
+    idPadre = idSeleccionado;
+    indiceNivel += 1;
+  }
+  const idNodo = rutaNodos.at(-1) || "";
   const recintos = ordenarRecintosAlfabeticamente((data.recintos || []).filter((recinto) => (
     !idNodo ||
     recinto.id_nodo_padre === idNodo ||
@@ -777,15 +796,15 @@ function LocalizadorAnfora({
   const buscarDirecto = (valor) => {
     onLimpiarSeleccion();
     setNumero(valor);
-    setIdNodo("");
+    setRutaNodos([]);
     setIdRecinto("");
     setIdMesa("");
   };
 
-  const seleccionarNodo = (valor) => {
+  const seleccionarNodo = (indice, valor) => {
     onLimpiarSeleccion();
     setNumero("");
-    setIdNodo(valor);
+    setRutaNodos((anterior) => [...anterior.slice(0, indice), valor]);
     setIdRecinto("");
     setIdMesa("");
   };
@@ -829,10 +848,25 @@ function LocalizadorAnfora({
         <div className="min-w-[220px] flex-1">
           <div className="mb-1 text-[10px] font-data uppercase tracking-widest text-slate-500">Búsqueda jerárquica</div>
           <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
-            <Select value={idNodo} onValueChange={seleccionarNodo}>
-              <SelectTrigger className="h-10" data-testid="filtro-nodo-anfora"><SelectValue placeholder="Nivel" /></SelectTrigger>
-              <SelectContent>{(data.nodos || []).map((nodo) => <SelectItem key={nodo.id} value={nodo.id}>{nodo.nombre_nodo}</SelectItem>)}</SelectContent>
-            </Select>
+            {nivelesNodos.map((nivel) => (
+              <Select
+                key={nivel.indice}
+                value={rutaNodos[nivel.indice] || ""}
+                onValueChange={(valor) => seleccionarNodo(nivel.indice, valor)}
+              >
+                <SelectTrigger
+                  className="h-10"
+                  data-testid={nivel.indice === 0 ? "filtro-nodo-anfora" : `filtro-nodo-anfora-${nivel.indice}`}
+                >
+                  <SelectValue placeholder={nivel.etiqueta} />
+                </SelectTrigger>
+                <SelectContent>
+                  {nivel.nodos.map((nodo) => (
+                    <SelectItem key={nodo.id} value={nodo.id}>{nodo.nombre_nodo}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            ))}
             <Select value={idRecinto} onValueChange={seleccionarRecinto} disabled={!idNodo}>
               <SelectTrigger className="h-10" data-testid="filtro-recinto-anfora"><SelectValue placeholder="Recinto" /></SelectTrigger>
               <SelectContent>{recintos.map((recinto) => <SelectItem key={recinto.id} value={recinto.id}>{recinto.nombre}</SelectItem>)}</SelectContent>
@@ -891,7 +925,7 @@ function LocalizadorAnfora({
         {resultados.length === 0 && <div className="border border-dashed border-slate-200 p-4 text-sm text-slate-400">No se encontraron ánforas para estos filtros.</div>}
         </div>
       ) : (
-        <div className="mt-5 border border-dashed border-slate-200 p-4 text-sm text-slate-500" data-testid="instruccion-busqueda-anfora">Seleccione un nivel o escriba un número de ánfora para iniciar la búsqueda.</div>
+        <div className="mt-5 border border-dashed border-slate-200 p-4 text-sm text-slate-500" data-testid="instruccion-busqueda-anfora">Seleccione una ubicación de la estructura o escriba un número de ánfora para iniciar la búsqueda.</div>
       )}
     </section>
   );
