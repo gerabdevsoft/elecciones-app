@@ -3123,14 +3123,63 @@ async def obtener_localizador_anforas(
             "id_recinto": 1,
             "id_papeletas": 1,
             "path_ancestros": 1,
+            "tipo_mesa": 1,
         },
     ).to_list(20000)
     anforas.sort(key=_clave_orden_anfora)
-    actas = await db.actas.find(
-        {"id_eleccion": id_eleccion, "id_anfora": {"$in": [anfora["id"] for anfora in anforas]}},
-        {"_id": 0, "id_anfora": 1, "estado": 1, "esta_bloqueada": 1, "conteos": 1, "actualizado_en": 1},
-    ).sort("actualizado_en", -1).to_list(20000)
-    actas_canonicas = {acta["id_anfora"]: acta for acta in _actas_unicas_por_anfora(actas) if acta.get("id_anfora")}
+    ids_anfora = [anfora["id"] for anfora in anforas]
+    actas = [acta async for acta in db.actas.aggregate([
+        {
+            "$match": {
+                "id_eleccion": id_eleccion,
+                "id_anfora": {"$in": ids_anfora},
+            },
+        },
+        {
+            "$project": {
+                "_id": 0,
+                "id_anfora": 1,
+                "id_mesa": 1,
+                "estado": 1,
+                "esta_bloqueada": 1,
+                "actualizado_en": 1,
+                "tipo_mesa": 1,
+                "tiene_conteos": {
+                    "$gt": [
+                        {
+                            "$size": {
+                                "$cond": [
+                                    {"$isArray": "$conteos"},
+                                    "$conteos",
+                                    [],
+                                ],
+                            },
+                        },
+                        0,
+                    ],
+                },
+            },
+        },
+        {
+            "$sort": {
+                "id_anfora": 1,
+                "tiene_conteos": -1,
+                "esta_bloqueada": -1,
+                "actualizado_en": -1,
+            },
+        },
+        {
+            "$group": {
+                "_id": "$id_anfora",
+                "id_anfora": {"$first": "$id_anfora"},
+                "id_mesa": {"$first": "$id_mesa"},
+                "estado": {"$first": "$estado"},
+                "esta_bloqueada": {"$first": "$esta_bloqueada"},
+                "tipo_mesa": {"$first": "$tipo_mesa"},
+            },
+        },
+    ])]
+    actas_canonicas = {acta["id_anfora"]: acta for acta in actas if acta.get("id_anfora")}
     for anfora in anforas:
         acta = actas_canonicas.get(anfora["id"])
         if not acta:
@@ -3139,8 +3188,8 @@ async def obtener_localizador_anforas(
             anfora["estado_acta"] = "consolidada"
         else:
             anfora["estado_acta"] = acta.get("estado") or "borrador"
-    ids_recinto = list({anfora["id_recinto"] for anfora in anforas})
-    ids_mesa = list({anfora["id_mesa"] for anfora in anforas})
+    ids_recinto = list({anfora["id_recinto"] for anfora in anforas if anfora.get("id_recinto")})
+    ids_mesa = list({anfora["id_mesa"] for anfora in anforas if anfora.get("id_mesa")})
     recintos = await db.recintos_electorales.find(
         {"id_eleccion": id_eleccion, "id": {"$in": ids_recinto}},
         {
@@ -3155,9 +3204,21 @@ async def obtener_localizador_anforas(
         {"id_eleccion": id_eleccion, "id": {"$in": ids_mesa}},
         {"_id": 0, "id": 1, "numero_mesa": 1, "id_recinto": 1, "tipo_mesa": 1},
     ).to_list(20000)
-    mesas = await _sincronizar_tipo_mesa_legado(id_eleccion, mesas)
     mesas.sort(key=_clave_orden_mesa)
-    tipo_por_mesa = {mesa["id"]: mesa.get("tipo_mesa") for mesa in mesas}
+    tipos_legacy_por_mesa = {}
+    for registro in [*anforas, *actas]:
+        tipo = registro.get("tipo_mesa")
+        id_mesa = registro.get("id_mesa")
+        if id_mesa and tipo in {"docente", "estudiante"}:
+            tipos_legacy_por_mesa.setdefault(id_mesa, set()).add(tipo)
+    tipo_por_mesa = {}
+    for mesa in mesas:
+        tipo = mesa.get("tipo_mesa")
+        if tipo not in {"docente", "estudiante"}:
+            tipos_legacy = tipos_legacy_por_mesa.get(mesa["id"], set())
+            tipo = next(iter(tipos_legacy)) if len(tipos_legacy) == 1 else None
+        mesa["tipo_mesa"] = tipo
+        tipo_por_mesa[mesa["id"]] = tipo
     for anfora in anforas:
         anfora["tipo_mesa"] = tipo_por_mesa.get(anfora.get("id_mesa"))
     ids_nodo = set()
