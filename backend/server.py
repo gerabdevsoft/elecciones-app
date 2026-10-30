@@ -667,6 +667,7 @@ class AsignacionOperativaReq(BaseModel):
     funcion: Literal["carga", "validacion"]
     id_nodos: List[str] = Field(default_factory=list)
     id_recintos: List[str] = Field(default_factory=list)
+    id_mesas: List[str] = Field(default_factory=list)
     id_anforas: List[str] = Field(default_factory=list)
 
 # ------------- Endpoints Auth -------------
@@ -772,14 +773,17 @@ async def _asignaciones_operativas_usuario(
 
 
 def _filtro_anforas_asignadas(asignaciones: List[dict]) -> dict:
-    """Aplica el nivel más específico de cada asignación: ánfora, recinto o nodo."""
+    """Aplica el nivel más específico de cada asignación: ánfora, mesa, recinto o nodo."""
     condiciones = []
     for asignacion in asignaciones:
         anforas = list(dict.fromkeys(asignacion.get("id_anforas", [])))
+        mesas = list(dict.fromkeys(asignacion.get("id_mesas", [])))
         recintos = list(dict.fromkeys(asignacion.get("id_recintos", [])))
         nodos = list(dict.fromkeys(asignacion.get("id_nodos", [])))
         if anforas:
             condiciones.append({"id": {"$in": anforas}})
+        elif mesas:
+            condiciones.append({"id_mesa": {"$in": mesas}})
         elif recintos:
             condiciones.append({"id_recinto": {"$in": recintos}})
         elif nodos:
@@ -1155,14 +1159,15 @@ async def guardar_asignacion_operativa(
     req: AsignacionOperativaReq,
     admin: dict = Depends(requerir_admin),
 ):
-    if not (req.id_nodos or req.id_recintos or req.id_anforas):
-        raise HTTPException(400, "Seleccione al menos un nodo, recinto o ánfora")
+    if not (req.id_nodos or req.id_recintos or req.id_mesas or req.id_anforas):
+        raise HTTPException(400, "Seleccione al menos un nodo, recinto, mesa o ánfora")
     usuario = await db.usuarios.find_one({"id": req.id_usuario}, {"_id": 0, "id": 1})
     if not usuario:
         raise HTTPException(404, "Usuario no encontrado")
     validaciones = [
         ("nodos_jerarquicos", req.id_nodos),
         ("recintos_electorales", req.id_recintos),
+        ("mesas_sufragio", req.id_mesas),
         ("anforas_mesa", req.id_anforas),
     ]
     for coleccion, ids in validaciones:
@@ -1178,6 +1183,7 @@ async def guardar_asignacion_operativa(
         "funcion": req.funcion,
         "id_nodos": list(dict.fromkeys(req.id_nodos)),
         "id_recintos": list(dict.fromkeys(req.id_recintos)),
+        "id_mesas": list(dict.fromkeys(req.id_mesas)),
         "id_anforas": list(dict.fromkeys(req.id_anforas)),
         "asignado_por": admin["id"],
         "creado_en": ahora,

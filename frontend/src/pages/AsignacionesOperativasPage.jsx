@@ -3,6 +3,7 @@ import { api, formatearError } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
 import {
   ordenarAnforasNumericamente,
+  ordenarMesasNumericamente,
   ordenarNodosAlfabeticamente,
   ordenarRecintosAlfabeticamente,
 } from "@/lib/sorting";
@@ -59,7 +60,15 @@ function perteneceANodosFinales(recinto, idsNodos) {
     || (recinto?.path_ancestros || []).some((nodo) => idsNodos.includes(nodo.id));
 }
 
-function anforaDentroDelAmbito(anfora, idsNodos, idsRecintos, recintosPorId) {
+function mesaDentroDelAmbito(mesa, idsNodos, idsRecintos, recintosPorId) {
+  if (!mesa) return false;
+  if (idsRecintos.length > 0 && !idsRecintos.includes(mesa.id_recinto)) return false;
+  if (idsNodos.length === 0) return true;
+  return perteneceANodosFinales(recintosPorId.get(mesa.id_recinto), idsNodos);
+}
+
+function anforaDentroDelAmbito(anfora, idsNodos, idsRecintos, idsMesas, recintosPorId) {
+  if (idsMesas.length > 0 && !idsMesas.includes(anfora.id_mesa)) return false;
   if (idsRecintos.length > 0 && !idsRecintos.includes(anfora.id_recinto)) return false;
   if (idsNodos.length === 0) return true;
 
@@ -87,6 +96,7 @@ export default function AsignacionesOperativasPage() {
     funcion: "carga",
     id_nodos: [],
     id_recintos: [],
+    id_mesas: [],
     id_anforas: [],
   });
 
@@ -129,13 +139,31 @@ export default function AsignacionesOperativasPage() {
     ),
     [estructura, form.id_nodos],
   );
-  const anforasDisponibles = useMemo(
-    () => ordenarAnforasNumericamente(
-      (estructura?.anforas || []).filter((anfora) => (
-        anforaDentroDelAmbito(anfora, form.id_nodos, form.id_recintos, recintosPorId)
+  const mesasPorId = useMemo(
+    () => new Map((estructura?.mesas || []).map((mesa) => [mesa.id, mesa])),
+    [estructura],
+  );
+  const mesasDisponibles = useMemo(
+    () => ordenarMesasNumericamente(
+      (estructura?.mesas || []).filter((mesa) => (
+        mesaDentroDelAmbito(mesa, form.id_nodos, form.id_recintos, recintosPorId)
       )),
     ),
     [estructura, form.id_nodos, form.id_recintos, recintosPorId],
+  );
+  const anforasDisponibles = useMemo(
+    () => ordenarAnforasNumericamente(
+      (estructura?.anforas || []).filter((anfora) => (
+        anforaDentroDelAmbito(
+          anfora,
+          form.id_nodos,
+          form.id_recintos,
+          form.id_mesas,
+          recintosPorId,
+        )
+      )),
+    ),
+    [estructura, form.id_nodos, form.id_recintos, form.id_mesas, recintosPorId],
   );
 
   const alternar = (campo, id) => {
@@ -151,24 +179,66 @@ export default function AsignacionesOperativasPage() {
       const idsRecintos = anterior.id_recintos.filter((idRecinto) => (
         perteneceANodosFinales(recintosPorId.get(idRecinto), idsNodos)
       ));
+      const idsMesas = anterior.id_mesas.filter((idMesa) => (
+        mesaDentroDelAmbito(mesasPorId.get(idMesa), idsNodos, idsRecintos, recintosPorId)
+      ));
       const anforasPorId = new Map((estructura?.anforas || []).map((anfora) => [anfora.id, anfora]));
       const idsAnforas = anterior.id_anforas.filter((idAnfora) => {
         const anfora = anforasPorId.get(idAnfora);
-        return anfora && anforaDentroDelAmbito(anfora, idsNodos, idsRecintos, recintosPorId);
+        return anfora && anforaDentroDelAmbito(
+          anfora,
+          idsNodos,
+          idsRecintos,
+          idsMesas,
+          recintosPorId,
+        );
       });
-      return { ...anterior, id_nodos: idsNodos, id_recintos: idsRecintos, id_anforas: idsAnforas };
+      return {
+        ...anterior,
+        id_nodos: idsNodos,
+        id_recintos: idsRecintos,
+        id_mesas: idsMesas,
+        id_anforas: idsAnforas,
+      };
     });
   };
 
   const alternarRecinto = (idRecinto) => {
     setForm((anterior) => {
       const idsRecintos = alternarId(anterior.id_recintos, idRecinto);
+      const idsMesas = anterior.id_mesas.filter((idMesa) => (
+        mesaDentroDelAmbito(mesasPorId.get(idMesa), anterior.id_nodos, idsRecintos, recintosPorId)
+      ));
       const anforasPorId = new Map((estructura?.anforas || []).map((anfora) => [anfora.id, anfora]));
       const idsAnforas = anterior.id_anforas.filter((idAnfora) => {
         const anfora = anforasPorId.get(idAnfora);
-        return anfora && anforaDentroDelAmbito(anfora, anterior.id_nodos, idsRecintos, recintosPorId);
+        return anfora && anforaDentroDelAmbito(
+          anfora,
+          anterior.id_nodos,
+          idsRecintos,
+          idsMesas,
+          recintosPorId,
+        );
       });
-      return { ...anterior, id_recintos: idsRecintos, id_anforas: idsAnforas };
+      return { ...anterior, id_recintos: idsRecintos, id_mesas: idsMesas, id_anforas: idsAnforas };
+    });
+  };
+
+  const alternarMesa = (idMesa) => {
+    setForm((anterior) => {
+      const idsMesas = alternarId(anterior.id_mesas, idMesa);
+      const anforasPorId = new Map((estructura?.anforas || []).map((anfora) => [anfora.id, anfora]));
+      const idsAnforas = anterior.id_anforas.filter((idAnfora) => {
+        const anfora = anforasPorId.get(idAnfora);
+        return anfora && anforaDentroDelAmbito(
+          anfora,
+          anterior.id_nodos,
+          anterior.id_recintos,
+          idsMesas,
+          recintosPorId,
+        );
+      });
+      return { ...anterior, id_mesas: idsMesas, id_anforas: idsAnforas };
     });
   };
 
@@ -202,6 +272,7 @@ export default function AsignacionesOperativasPage() {
         ...anterior,
         id_nodos: [],
         id_recintos: [],
+        id_mesas: [],
         id_anforas: [],
       }));
       await cargar();
@@ -227,7 +298,7 @@ export default function AsignacionesOperativasPage() {
       <div className="border-l-4 border-[#1E3A8A] pl-4">
         <div className="text-[10px] font-data uppercase tracking-widest text-slate-500">Administración operativa</div>
         <h1 className="mt-1 font-display text-3xl font-extrabold text-slate-900">Usuarios y ámbitos</h1>
-        <p className="mt-1 text-slate-600">{procesoActivo.nombre} · los ámbitos se heredan dinámicamente a recintos y ánforas.</p>
+        <p className="mt-1 text-slate-600">{procesoActivo.nombre} · los ámbitos se heredan dinámicamente entre nodos, recintos, mesas y ánforas.</p>
       </div>
 
       <div className="mt-8 grid grid-cols-1 gap-6 xl:grid-cols-[360px_1fr]">
@@ -280,9 +351,10 @@ export default function AsignacionesOperativasPage() {
             <div><Label>Usuario</Label><Select value={form.id_usuario} onValueChange={(id_usuario) => setForm({ ...form, id_usuario })}><SelectTrigger data-testid="asignar-usuario-select"><SelectValue placeholder="Seleccione una cuenta" /></SelectTrigger><SelectContent>{usuarios.map((usuario) => <SelectItem key={usuario.id} value={usuario.id}>{usuario.nombre_completo} · {usuario.email}</SelectItem>)}</SelectContent></Select></div>
             <div><Label>Función en esta elección</Label><Select value={form.funcion} onValueChange={(funcion) => setForm({ ...form, funcion })}><SelectTrigger data-testid="asignar-funcion-select"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="carga">Operador de carga</SelectItem><SelectItem value="validacion">Validador de actas</SelectItem></SelectContent></Select></div>
           </div>
-          <div className="mt-5 grid grid-cols-1 gap-4 lg:grid-cols-3">
+          <div className="mt-5 grid grid-cols-1 gap-4 lg:grid-cols-2 2xl:grid-cols-4">
             <SelectorAmbito titulo="Nodos finales" items={nodosTerminales} seleccionados={form.id_nodos} onAlternar={alternarNodo} testid="scope-nodos" etiqueta={(item) => item.path_texto || item.nombre_nodo} />
             <SelectorAmbito titulo="Recintos" items={recintosDisponibles} seleccionados={form.id_recintos} onAlternar={alternarRecinto} testid="scope-recintos" etiqueta={(item) => item.nombre} />
+            <SelectorAmbito titulo="Mesas" items={mesasDisponibles} seleccionados={form.id_mesas} onAlternar={alternarMesa} testid="scope-mesas" etiqueta={(item) => `Mesa ${item.numero_mesa}`} />
             <SelectorAmbito titulo="Ánforas específicas" items={anforasDisponibles} seleccionados={form.id_anforas} onAlternar={(id) => alternar("id_anforas", id)} testid="scope-anforas" etiqueta={(item) => `${item.numero_anfora} · ${item.nombre}`} />
           </div>
           <Button onClick={guardarAsignacion} disabled={!form.id_usuario} className="mt-5" data-testid="guardar-asignacion-operativa-button"><ShieldCheck className="w-4 h-4 mr-2" /> Guardar asignación</Button>
@@ -291,7 +363,7 @@ export default function AsignacionesOperativasPage() {
 
       <section className="mt-8 border border-slate-200 bg-white p-5" data-testid="lista-asignaciones-operativas">
         <div className="flex items-center gap-2"><Users className="w-5 h-5 text-[#1E3A8A]" /><h2 className="font-display text-lg font-bold">Asignaciones vigentes</h2></div>
-        <div className="mt-4 overflow-x-auto"><table className="min-w-full text-sm"><thead className="border-b border-slate-200 text-left text-[10px] font-data uppercase tracking-widest text-slate-500"><tr><th className="p-2">Usuario</th><th className="p-2">Función</th><th className="p-2">Ámbito</th><th className="p-2" /></tr></thead><tbody>{asignaciones.map((asignacion) => { const usuario = usuarios.find((item) => item.id === asignacion.id_usuario); return <tr key={asignacion.id} className="border-b border-slate-100"><td className="p-2"><div className="font-semibold">{usuario?.nombre_completo || "Usuario eliminado"}</div><div className="text-xs text-slate-500">{usuario?.email}</div></td><td className="p-2 capitalize">{asignacion.funcion}</td><td className="p-2 text-xs text-slate-600">{asignacion.id_nodos.length} nodos · {asignacion.id_recintos.length} recintos · {asignacion.id_anforas.length} ánforas</td><td className="p-2 text-right"><Button variant="outline" size="sm" onClick={() => eliminar(asignacion.id)} data-testid={`eliminar-asignacion-${asignacion.id}`}>Quitar</Button></td></tr>; })}</tbody></table></div>
+        <div className="mt-4 overflow-x-auto"><table className="min-w-full text-sm"><thead className="border-b border-slate-200 text-left text-[10px] font-data uppercase tracking-widest text-slate-500"><tr><th className="p-2">Usuario</th><th className="p-2">Función</th><th className="p-2">Ámbito</th><th className="p-2" /></tr></thead><tbody>{asignaciones.map((asignacion) => { const usuario = usuarios.find((item) => item.id === asignacion.id_usuario); return <tr key={asignacion.id} className="border-b border-slate-100"><td className="p-2"><div className="font-semibold">{usuario?.nombre_completo || "Usuario eliminado"}</div><div className="text-xs text-slate-500">{usuario?.email}</div></td><td className="p-2 capitalize">{asignacion.funcion}</td><td className="p-2 text-xs text-slate-600">{asignacion.id_nodos.length} nodos · {asignacion.id_recintos.length} recintos · {(asignacion.id_mesas || []).length} mesas · {asignacion.id_anforas.length} ánforas</td><td className="p-2 text-right"><Button variant="outline" size="sm" onClick={() => eliminar(asignacion.id)} data-testid={`eliminar-asignacion-${asignacion.id}`}>Quitar</Button></td></tr>; })}</tbody></table></div>
       </section>
     </div>
   );
