@@ -17,3 +17,10 @@ export function ordenarMesasNumericamente(mesas = []) {
 export function ordenarAnforasNumericamente(anforas = []) {
   return ordenarPorNumeroNatural(anforas, "numero_anfora");
 }
+
+export function ordenarRecintosAlfabeticamente(recintos = []) {
+  return [...recintos].sort((a, b) => (
+    comparadorNatural.compare(String(a.nombre ?? ""), String(b.nombre ?? "")) ||
+    String(a.id ?? "").localeCompare(String(b.id ?? ""))
+  ));
+}

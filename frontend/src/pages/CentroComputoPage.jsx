@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useState, useRef } from "react";
 import { api, formatearError } from "@/lib/api";
-import { ordenarAnforasNumericamente, ordenarMesasNumericamente } from "@/lib/sorting";
+import {
+  ordenarAnforasNumericamente,
+  ordenarMesasNumericamente,
+  ordenarRecintosAlfabeticamente,
+} from "@/lib/sorting";
 import { useAuth } from "@/context/AuthContext";
 import { comprimirImagenActa } from "@/lib/imageCompress";
 import { Button } from "@/components/ui/button";
@@ -734,11 +738,11 @@ function LocalizadorAnfora({
     );
   }
 
-  const recintos = (data.recintos || []).filter((recinto) => (
+  const recintos = ordenarRecintosAlfabeticamente((data.recintos || []).filter((recinto) => (
     !idNodo ||
     recinto.id_nodo_padre === idNodo ||
     (recinto.path_ancestros || []).some((nodo) => nodo.id === idNodo)
-  ));
+  )));
   const mesas = ordenarMesasNumericamente(
     (data.mesas || []).filter((mesa) => !idRecinto || mesa.id_recinto === idRecinto)
   );
