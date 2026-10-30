@@ -1,11 +1,10 @@
 import { useCallback, useEffect, useState, useRef } from "react";
 import { api, formatearError } from "@/lib/api";
+import { ordenarAnforasNumericamente } from "@/lib/sorting";
 import {
-  ordenarAnforasNumericamente,
-  ordenarMesasNumericamente,
-  ordenarNodosAlfabeticamente,
-  ordenarRecintosAlfabeticamente,
-} from "@/lib/sorting";
+  construirFiltrosEstructura,
+  filtrarAnforasPorEstructura,
+} from "@/lib/electoralFilters";
 import { useAuth } from "@/context/AuthContext";
 import { comprimirImagenActa } from "@/lib/imageCompress";
 import { Button } from "@/components/ui/button";
@@ -745,38 +744,11 @@ function LocalizadorAnfora({
     );
   }
 
-  const nivelesNodos = [];
-  let idPadre = null;
-  let indiceNivel = 0;
-  while (true) {
-    const nodosNivel = ordenarNodosAlfabeticamente((data.nodos || [])
-      .filter((nodo) => (nodo.id_padre || null) === idPadre));
-    if (nodosNivel.length === 0) break;
-    nivelesNodos.push({
-      indice: indiceNivel,
-      etiqueta: nodosNivel[0].nombre_nivel || "Estructura electoral",
-      nodos: nodosNivel,
-    });
-    const idSeleccionado = rutaNodos[indiceNivel];
-    if (!idSeleccionado) break;
-    idPadre = idSeleccionado;
-    indiceNivel += 1;
-  }
-  const idNodo = rutaNodos.at(-1) || "";
-  const recintos = ordenarRecintosAlfabeticamente((data.recintos || []).filter((recinto) => (
-    !idNodo ||
-    recinto.id_nodo_padre === idNodo ||
-    (recinto.path_ancestros || []).some((nodo) => nodo.id === idNodo)
-  )));
-  const mesas = ordenarMesasNumericamente(
-    (data.mesas || []).filter((mesa) => !idRecinto || mesa.id_recinto === idRecinto)
+  const { niveles: nivelesNodos, idNodoTerminal: idNodo, recintos, mesas } =
+    construirFiltrosEstructura(data, rutaNodos, idRecinto);
+  const anforasJerarquia = ordenarAnforasNumericamente(
+    filtrarAnforasPorEstructura(data.anforas || [], rutaNodos, idRecinto, idMesa),
   );
-  const anforasJerarquia = ordenarAnforasNumericamente((data.anforas || []).filter((anfora) => {
-    const coincideNodo = !idNodo || (anfora.path_ancestros || []).some((nodo) => nodo.id === idNodo);
-    const coincideRecinto = !idRecinto || anfora.id_recinto === idRecinto;
-    const coincideMesa = !idMesa || anfora.id_mesa === idMesa;
-    return coincideNodo && coincideRecinto && coincideMesa;
-  }));
   const anforasDirectas = ordenarAnforasNumericamente((data.anforas || []).filter((anfora) => (
     String(anfora.numero_anfora).toLowerCase().includes(numero.trim().toLowerCase())
   )));

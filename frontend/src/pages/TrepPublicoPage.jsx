@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "@/lib/api";
+import { ordenarAnforasNumericamente } from "@/lib/sorting";
 import {
-  ordenarMesasNumericamente,
-  ordenarNodosAlfabeticamente,
-  ordenarRecintosAlfabeticamente,
-} from "@/lib/sorting";
+  construirFiltrosEstructura,
+  filtrarAnforasPorEstructura,
+} from "@/lib/electoralFilters";
 import { FileImage, Search, Vote } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -48,55 +48,23 @@ export default function TrepPublicoPage() {
     setErrorActa("");
   }, [numeroDirecto, numeroEstructura, rutaNodos, idRecinto, idMesa]);
 
-  const nivelesNodos = useMemo(() => {
-    const nodos = localizador?.nodos || [];
-    const niveles = [];
-    let idPadre = null;
-    let indice = 0;
-
-    while (true) {
-      const nodosNivel = ordenarNodosAlfabeticamente(
-        nodos.filter((nodo) => (nodo.id_padre || null) === idPadre)
-      );
-      if (!nodosNivel.length) break;
-      niveles.push({
-        indice,
-        etiqueta: nodosNivel[0].nombre_nivel || "Estructura electoral",
-        nodos: nodosNivel,
-      });
-      const idSeleccionado = rutaNodos[indice];
-      if (!idSeleccionado) break;
-      idPadre = idSeleccionado;
-      indice += 1;
-    }
-    return niveles;
-  }, [localizador, rutaNodos]);
-
-  const idNodoTerminal = rutaNodos.at(-1) || "";
-  const recintos = useMemo(() => ordenarRecintosAlfabeticamente(
-    (localizador?.recintos || []).filter((recinto) => (
-      !idNodoTerminal ||
-      recinto.id_nodo_padre === idNodoTerminal ||
-      (recinto.path_ancestros || []).some((nodo) => nodo.id === idNodoTerminal)
-    ))
-  ), [idNodoTerminal, localizador]);
-  const mesas = useMemo(() => ordenarMesasNumericamente(
-    (localizador?.mesas || []).filter((mesa) => !idRecinto || mesa.id_recinto === idRecinto)
-  ), [localizador, idRecinto]);
-  const anforas = useMemo(() => (localizador?.anforas || []).filter((anfora) => {
-    const coincideDirecta = numeroDirecto.trim()
-      ? String(anfora.numero_anfora).toLowerCase().includes(numeroDirecto.trim().toLowerCase())
-      : true;
-    const coincideRuta = rutaNodos.every((idNodo) => (
-      (anfora.path_ancestros || []).some((nodo) => nodo.id === idNodo)
-    ));
-    const coincideRecinto = !idRecinto || anfora.id_recinto === idRecinto;
-    const coincideMesa = !idMesa || anfora.id_mesa === idMesa;
-    const coincideNumeroEstructura = !numeroEstructura.trim() || (
-      String(anfora.numero_anfora) === numeroEstructura.trim()
-    );
-    return coincideDirecta && coincideRuta && coincideRecinto && coincideMesa && coincideNumeroEstructura;
-  }), [idMesa, idRecinto, localizador, numeroDirecto, numeroEstructura, rutaNodos]);
+  const filtrosEstructura = useMemo(
+    () => construirFiltrosEstructura(localizador || {}, rutaNodos, idRecinto),
+    [localizador, rutaNodos, idRecinto],
+  );
+  const { niveles: nivelesNodos, idNodoTerminal, recintos, mesas } = filtrosEstructura;
+  const anforas = useMemo(() => ordenarAnforasNumericamente(
+    filtrarAnforasPorEstructura(localizador?.anforas || [], rutaNodos, idRecinto, idMesa)
+      .filter((anfora) => {
+        const coincideDirecta = numeroDirecto.trim()
+          ? String(anfora.numero_anfora).toLowerCase().includes(numeroDirecto.trim().toLowerCase())
+          : true;
+        const coincideNumeroEstructura = !numeroEstructura.trim() || (
+          String(anfora.numero_anfora) === numeroEstructura.trim()
+        );
+        return coincideDirecta && coincideNumeroEstructura;
+      }),
+  ), [idMesa, idRecinto, localizador, numeroDirecto, numeroEstructura, rutaNodos]);
 
   const seleccionarNodo = (indice, idNodo) => {
     setRutaNodos((anterior) => [...anterior.slice(0, indice), idNodo]);
