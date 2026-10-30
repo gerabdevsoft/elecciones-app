@@ -1,7 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
 import { api, formatearError } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
-import { ordenarAnforasNumericamente } from "@/lib/sorting";
+import {
+  ordenarAnforasNumericamente,
+  ordenarRecintosAlfabeticamente,
+} from "@/lib/sorting";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -49,6 +52,27 @@ function usuarioVacio() {
   return { nombre_completo: "", email: "", contrasena: generarContrasenaInicial() };
 }
 
+function perteneceANodosFinales(recinto, idsNodos) {
+  if (idsNodos.length === 0) return true;
+  return idsNodos.includes(recinto?.id_nodo_padre)
+    || (recinto?.path_ancestros || []).some((nodo) => idsNodos.includes(nodo.id));
+}
+
+function anforaDentroDelAmbito(anfora, idsNodos, idsRecintos, recintosPorId) {
+  if (idsRecintos.length > 0 && !idsRecintos.includes(anfora.id_recinto)) return false;
+  if (idsNodos.length === 0) return true;
+
+  const recinto = recintosPorId.get(anfora.id_recinto);
+  return perteneceANodosFinales(recinto, idsNodos)
+    || (anfora.path_ancestros || []).some((nodo) => idsNodos.includes(nodo.id));
+}
+
+function alternarId(seleccionados, id) {
+  return seleccionados.includes(id)
+    ? seleccionados.filter((valor) => valor !== id)
+    : [...seleccionados, id];
+}
+
 export default function AsignacionesOperativasPage() {
   const { procesoActivo } = useAuth();
   const [usuarios, setUsuarios] = useState([]);
@@ -90,14 +114,59 @@ export default function AsignacionesOperativasPage() {
     () => ordenarAnforasNumericamente(estructura?.anforas || []),
     [estructura],
   );
+  const recintosPorId = useMemo(
+    () => new Map((estructura?.recintos || []).map((recinto) => [recinto.id, recinto])),
+    [estructura],
+  );
+  const recintosDisponibles = useMemo(
+    () => ordenarRecintosAlfabeticamente(
+      (estructura?.recintos || []).filter((recinto) => (
+        perteneceANodosFinales(recinto, form.id_nodos)
+      )),
+    ),
+    [estructura, form.id_nodos],
+  );
+  const anforasDisponibles = useMemo(
+    () => ordenarAnforasNumericamente(
+      (estructura?.anforas || []).filter((anfora) => (
+        anforaDentroDelAmbito(anfora, form.id_nodos, form.id_recintos, recintosPorId)
+      )),
+    ),
+    [estructura, form.id_nodos, form.id_recintos, recintosPorId],
+  );
 
   const alternar = (campo, id) => {
     setForm((anterior) => ({
       ...anterior,
-      [campo]: anterior[campo].includes(id)
-        ? anterior[campo].filter((valor) => valor !== id)
-        : [...anterior[campo], id],
+      [campo]: alternarId(anterior[campo], id),
     }));
+  };
+
+  const alternarNodo = (idNodo) => {
+    setForm((anterior) => {
+      const idsNodos = alternarId(anterior.id_nodos, idNodo);
+      const idsRecintos = anterior.id_recintos.filter((idRecinto) => (
+        perteneceANodosFinales(recintosPorId.get(idRecinto), idsNodos)
+      ));
+      const anforasPorId = new Map((estructura?.anforas || []).map((anfora) => [anfora.id, anfora]));
+      const idsAnforas = anterior.id_anforas.filter((idAnfora) => {
+        const anfora = anforasPorId.get(idAnfora);
+        return anfora && anforaDentroDelAmbito(anfora, idsNodos, idsRecintos, recintosPorId);
+      });
+      return { ...anterior, id_nodos: idsNodos, id_recintos: idsRecintos, id_anforas: idsAnforas };
+    });
+  };
+
+  const alternarRecinto = (idRecinto) => {
+    setForm((anterior) => {
+      const idsRecintos = alternarId(anterior.id_recintos, idRecinto);
+      const anforasPorId = new Map((estructura?.anforas || []).map((anfora) => [anfora.id, anfora]));
+      const idsAnforas = anterior.id_anforas.filter((idAnfora) => {
+        const anfora = anforasPorId.get(idAnfora);
+        return anfora && anforaDentroDelAmbito(anfora, anterior.id_nodos, idsRecintos, recintosPorId);
+      });
+      return { ...anterior, id_recintos: idsRecintos, id_anforas: idsAnforas };
+    });
   };
 
   const crearUsuario = async (evento) => {
@@ -209,9 +278,9 @@ export default function AsignacionesOperativasPage() {
             <div><Label>Función en esta elección</Label><Select value={form.funcion} onValueChange={(funcion) => setForm({ ...form, funcion })}><SelectTrigger data-testid="asignar-funcion-select"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="carga">Operador de carga</SelectItem><SelectItem value="validacion">Validador de actas</SelectItem></SelectContent></Select></div>
           </div>
           <div className="mt-5 grid grid-cols-1 gap-4 lg:grid-cols-3">
-            <SelectorAmbito titulo="Nodos finales" items={nodosTerminales} seleccionados={form.id_nodos} onAlternar={(id) => alternar("id_nodos", id)} testid="scope-nodos" etiqueta={(item) => item.path_texto || item.nombre_nodo} />
-            <SelectorAmbito titulo="Recintos" items={estructura?.recintos || []} seleccionados={form.id_recintos} onAlternar={(id) => alternar("id_recintos", id)} testid="scope-recintos" etiqueta={(item) => item.nombre} />
-            <SelectorAmbito titulo="Ánforas específicas" items={anforasOrdenadas} seleccionados={form.id_anforas} onAlternar={(id) => alternar("id_anforas", id)} testid="scope-anforas" etiqueta={(item) => `${item.numero_anfora} · ${item.nombre}`} />
+            <SelectorAmbito titulo="Nodos finales" items={nodosTerminales} seleccionados={form.id_nodos} onAlternar={alternarNodo} testid="scope-nodos" etiqueta={(item) => item.path_texto || item.nombre_nodo} />
+            <SelectorAmbito titulo="Recintos" items={recintosDisponibles} seleccionados={form.id_recintos} onAlternar={alternarRecinto} testid="scope-recintos" etiqueta={(item) => item.nombre} />
+            <SelectorAmbito titulo="Ánforas específicas" items={anforasDisponibles} seleccionados={form.id_anforas} onAlternar={(id) => alternar("id_anforas", id)} testid="scope-anforas" etiqueta={(item) => `${item.numero_anfora} · ${item.nombre}`} />
           </div>
           <Button onClick={guardarAsignacion} disabled={!form.id_usuario} className="mt-5" data-testid="guardar-asignacion-operativa-button"><ShieldCheck className="w-4 h-4 mr-2" /> Guardar asignación</Button>
         </section>
