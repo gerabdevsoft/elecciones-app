@@ -3114,7 +3114,16 @@ async def obtener_localizador_anforas(
         filtro_anforas.update(_filtro_anforas_asignadas(asignaciones))
     anforas = await db.anforas_mesa.find(
         filtro_anforas,
-        {"_id": 0},
+        {
+            "_id": 0,
+            "id": 1,
+            "numero_anfora": 1,
+            "nombre": 1,
+            "id_mesa": 1,
+            "id_recinto": 1,
+            "id_papeletas": 1,
+            "path_ancestros": 1,
+        },
     ).to_list(20000)
     anforas.sort(key=_clave_orden_anfora)
     actas = await db.actas.find(
@@ -3134,11 +3143,17 @@ async def obtener_localizador_anforas(
     ids_mesa = list({anfora["id_mesa"] for anfora in anforas})
     recintos = await db.recintos_electorales.find(
         {"id_eleccion": id_eleccion, "id": {"$in": ids_recinto}},
-        {"_id": 0},
+        {
+            "_id": 0,
+            "id": 1,
+            "nombre": 1,
+            "id_nodo_padre": 1,
+            "path_ancestros": 1,
+        },
     ).to_list(5000)
     mesas = await db.mesas_sufragio.find(
         {"id_eleccion": id_eleccion, "id": {"$in": ids_mesa}},
-        {"_id": 0},
+        {"_id": 0, "id": 1, "numero_mesa": 1, "id_recinto": 1, "tipo_mesa": 1},
     ).to_list(20000)
     mesas = await _sincronizar_tipo_mesa_legado(id_eleccion, mesas)
     mesas.sort(key=_clave_orden_mesa)
@@ -3151,7 +3166,7 @@ async def obtener_localizador_anforas(
         ids_nodo.update(nodo.get("id") for nodo in recinto.get("path_ancestros", []))
     nodos = await db.nodos_jerarquicos.find(
         {"id_eleccion": id_eleccion, "id": {"$in": list(ids_nodo - {None})}},
-        {"_id": 0},
+        {"_id": 0, "id": 1, "nombre_nodo": 1, "es_hoja_configurada": 1},
     ).to_list(5000)
     return {
         "nodos": nodos,

@@ -132,7 +132,13 @@ export default function CentroComputoPage() {
         `/procesos/${procesoActivo.id_eleccion}/localizador-anforas`,
         { timeout: 30000 },
       );
-      if (!data || !Array.isArray(data.anforas) || !Array.isArray(data.mesas)) {
+      if (
+        !data ||
+        !Array.isArray(data.anforas) ||
+        !Array.isArray(data.mesas) ||
+        !Array.isArray(data.recintos) ||
+        !Array.isArray(data.nodos)
+      ) {
         throw new Error("El servidor devolvió datos incompletos para el localizador.");
       }
       setLocalizador(data);
