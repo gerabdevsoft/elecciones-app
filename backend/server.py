@@ -37,7 +37,7 @@ from fastapi import (
 from fastapi.responses import JSONResponse
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
-from pydantic import BaseModel, Field, EmailStr, ConfigDict
+from pydantic import BaseModel, Field, EmailStr, ConfigDict, field_validator
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("stre")
@@ -647,8 +647,19 @@ class MesaSufragio(BaseModel):
 
 class CrearUsuarioOperativoReq(BaseModel):
     email: EmailStr
-    contrasena: str = Field(min_length=10)
+    contrasena: str = Field(min_length=6, max_length=6)
     nombre_completo: str = Field(min_length=3, max_length=120)
+
+    @field_validator("contrasena")
+    @classmethod
+    def validar_contrasena_operativa(cls, valor: str) -> str:
+        if (
+            not re.search(r"[A-Za-z]", valor)
+            or not re.search(r"\d", valor)
+            or not re.search(r"[^A-Za-z0-9]", valor)
+        ):
+            raise ValueError("La contraseña debe incluir letras, números y un carácter especial.")
+        return valor
 
 
 class AsignacionOperativaReq(BaseModel):

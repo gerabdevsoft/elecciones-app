@@ -1,21 +1,62 @@
 import { useEffect, useMemo, useState } from "react";
 import { api, formatearError } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
+import { ordenarAnforasNumericamente } from "@/lib/sorting";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { ShieldCheck, UserPlus, Users } from "lucide-react";
+import { Eye, EyeOff, ShieldCheck, UserPlus, Users } from "lucide-react";
 import { toast } from "sonner";
 
-const inicialUsuario = { nombre_completo: "", email: "", contrasena: "" };
+const ALFANUMERICOS = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789";
+const LETRAS = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+const NUMEROS = "23456789";
+const ESPECIALES = "!@#$%&*?";
+
+function indiceAleatorio(limite) {
+  const maximoUint32 = 0x100000000;
+  const rangoAceptado = Math.floor(maximoUint32 / limite) * limite;
+  const valor = new Uint32Array(1);
+  do {
+    window.crypto.getRandomValues(valor);
+  } while (valor[0] >= rangoAceptado);
+  return valor[0] % limite;
+}
+
+function generarContrasenaInicial() {
+  const caracteres = [
+    LETRAS[indiceAleatorio(LETRAS.length)],
+    NUMEROS[indiceAleatorio(NUMEROS.length)],
+    ...Array.from(
+      { length: 3 },
+      () => ALFANUMERICOS[indiceAleatorio(ALFANUMERICOS.length)],
+    ),
+    ESPECIALES[indiceAleatorio(ESPECIALES.length)],
+  ];
+
+  for (let indice = caracteres.length - 1; indice > 0; indice -= 1) {
+    const otroIndice = indiceAleatorio(indice + 1);
+    [caracteres[indice], caracteres[otroIndice]] = [
+      caracteres[otroIndice],
+      caracteres[indice],
+    ];
+  }
+  return caracteres.join("");
+}
+
+function usuarioVacio() {
+  return { nombre_completo: "", email: "", contrasena: generarContrasenaInicial() };
+}
 
 export default function AsignacionesOperativasPage() {
   const { procesoActivo } = useAuth();
   const [usuarios, setUsuarios] = useState([]);
   const [asignaciones, setAsignaciones] = useState([]);
   const [estructura, setEstructura] = useState(null);
-  const [usuarioNuevo, setUsuarioNuevo] = useState(inicialUsuario);
+  const [usuarioNuevo, setUsuarioNuevo] = useState(usuarioVacio);
+  const [usuarioCreado, setUsuarioCreado] = useState(null);
+  const [mostrarContrasenaCreada, setMostrarContrasenaCreada] = useState(false);
   const [form, setForm] = useState({
     id_usuario: "",
     funcion: "carga",
@@ -45,6 +86,10 @@ export default function AsignacionesOperativasPage() {
   const nodosTerminales = useMemo(() => (
     (estructura?.nodos || []).filter((nodo) => nodo.es_hoja_configurada)
   ), [estructura]);
+  const anforasOrdenadas = useMemo(
+    () => ordenarAnforasNumericamente(estructura?.anforas || []),
+    [estructura],
+  );
 
   const alternar = (campo, id) => {
     setForm((anterior) => ({
@@ -60,7 +105,13 @@ export default function AsignacionesOperativasPage() {
     try {
       const { data } = await api.post("/admin/usuarios-operativos", usuarioNuevo);
       toast.success("Usuario operativo creado.");
-      setUsuarioNuevo(inicialUsuario);
+      setUsuarioCreado({
+        email: data.email,
+        nombre_completo: data.nombre_completo,
+        contrasena: usuarioNuevo.contrasena,
+      });
+      setMostrarContrasenaCreada(false);
+      setUsuarioNuevo(usuarioVacio());
       setForm((anterior) => ({ ...anterior, id_usuario: data.id }));
       await cargar();
     } catch (e) {
@@ -113,9 +164,42 @@ export default function AsignacionesOperativasPage() {
           <div className="mt-5 space-y-3">
             <div><Label>Nombre completo</Label><Input value={usuarioNuevo.nombre_completo} onChange={(evento) => setUsuarioNuevo({ ...usuarioNuevo, nombre_completo: evento.target.value })} data-testid="nombre-usuario-operativo" /></div>
             <div><Label>Correo electrónico</Label><Input type="email" value={usuarioNuevo.email} onChange={(evento) => setUsuarioNuevo({ ...usuarioNuevo, email: evento.target.value })} data-testid="email-usuario-operativo" /></div>
-            <div><Label>Contraseña inicial</Label><Input type="password" minLength="10" value={usuarioNuevo.contrasena} onChange={(evento) => setUsuarioNuevo({ ...usuarioNuevo, contrasena: evento.target.value })} data-testid="contrasena-usuario-operativo" /></div>
+            <div>
+              <Label>Contraseña inicial</Label>
+              <Input
+                type="password"
+                value={usuarioNuevo.contrasena}
+                readOnly
+                aria-label="Contraseña inicial generada"
+                data-testid="contrasena-usuario-operativo"
+              />
+              <p className="mt-1 text-xs text-slate-500">Se genera automáticamente: 6 caracteres con letras, números y un carácter especial.</p>
+            </div>
           </div>
           <Button type="submit" className="mt-5 w-full" data-testid="crear-usuario-operativo-button"><UserPlus className="w-4 h-4 mr-2" /> Crear cuenta</Button>
+          {usuarioCreado && (
+            <div className="mt-4 border border-emerald-200 bg-emerald-50 p-4" data-testid="credenciales-usuario-creado">
+              <div className="font-semibold text-emerald-900">Usuario operativo creado</div>
+              <div className="mt-1 text-sm text-emerald-900">{usuarioCreado.nombre_completo} · {usuarioCreado.email}</div>
+              <div className="mt-3 flex items-center gap-2">
+                <code className="min-w-0 flex-1 break-all rounded border border-emerald-200 bg-white px-3 py-2 text-sm" data-testid="contrasena-usuario-creado">
+                  {mostrarContrasenaCreada ? usuarioCreado.contrasena : "••••••"}
+                </code>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setMostrarContrasenaCreada((visible) => !visible)}
+                  aria-label={mostrarContrasenaCreada ? "Ocultar contraseña" : "Ver contraseña"}
+                  data-testid="alternar-visibilidad-contrasena"
+                >
+                  {mostrarContrasenaCreada ? <EyeOff className="mr-1 h-4 w-4" /> : <Eye className="mr-1 h-4 w-4" />}
+                  {mostrarContrasenaCreada ? "Ocultar" : "Ver"}
+                </Button>
+              </div>
+              <p className="mt-2 text-xs text-emerald-800">Guárdala ahora; no se podrá consultar después de salir de esta pantalla.</p>
+            </div>
+          )}
         </form>
 
         <section className="border border-slate-200 bg-white p-5" data-testid="asignar-ambito-operativo">
@@ -127,7 +211,7 @@ export default function AsignacionesOperativasPage() {
           <div className="mt-5 grid grid-cols-1 gap-4 lg:grid-cols-3">
             <SelectorAmbito titulo="Nodos finales" items={nodosTerminales} seleccionados={form.id_nodos} onAlternar={(id) => alternar("id_nodos", id)} testid="scope-nodos" etiqueta={(item) => item.path_texto || item.nombre_nodo} />
             <SelectorAmbito titulo="Recintos" items={estructura?.recintos || []} seleccionados={form.id_recintos} onAlternar={(id) => alternar("id_recintos", id)} testid="scope-recintos" etiqueta={(item) => item.nombre} />
-            <SelectorAmbito titulo="Ánforas específicas" items={estructura?.anforas || []} seleccionados={form.id_anforas} onAlternar={(id) => alternar("id_anforas", id)} testid="scope-anforas" etiqueta={(item) => `${item.numero_anfora} · ${item.nombre}`} />
+            <SelectorAmbito titulo="Ánforas específicas" items={anforasOrdenadas} seleccionados={form.id_anforas} onAlternar={(id) => alternar("id_anforas", id)} testid="scope-anforas" etiqueta={(item) => `${item.numero_anfora} · ${item.nombre}`} />
           </div>
           <Button onClick={guardarAsignacion} disabled={!form.id_usuario} className="mt-5" data-testid="guardar-asignacion-operativa-button"><ShieldCheck className="w-4 h-4 mr-2" /> Guardar asignación</Button>
         </section>
