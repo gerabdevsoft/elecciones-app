@@ -24,3 +24,10 @@ export function ordenarRecintosAlfabeticamente(recintos = []) {
     String(a.id ?? "").localeCompare(String(b.id ?? ""))
   ));
 }
+
+export function ordenarNodosAlfabeticamente(nodos = []) {
+  return [...nodos].sort((a, b) => (
+    comparadorNatural.compare(String(a.nombre_nodo ?? ""), String(b.nombre_nodo ?? "")) ||
+    String(a.id ?? "").localeCompare(String(b.id ?? ""))
+  ));
+}

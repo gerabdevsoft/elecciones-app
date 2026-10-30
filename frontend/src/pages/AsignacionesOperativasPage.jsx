@@ -3,6 +3,7 @@ import { api, formatearError } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
 import {
   ordenarAnforasNumericamente,
+  ordenarNodosAlfabeticamente,
   ordenarRecintosAlfabeticamente,
 } from "@/lib/sorting";
 import { Button } from "@/components/ui/button";
@@ -108,7 +109,9 @@ export default function AsignacionesOperativasPage() {
   useEffect(() => { cargar(); }, [procesoActivo?.id_eleccion]);
 
   const nodosTerminales = useMemo(() => (
-    (estructura?.nodos || []).filter((nodo) => nodo.es_hoja_configurada)
+    ordenarNodosAlfabeticamente(
+      (estructura?.nodos || []).filter((nodo) => nodo.es_hoja_configurada),
+    )
   ), [estructura]);
   const anforasOrdenadas = useMemo(
     () => ordenarAnforasNumericamente(estructura?.anforas || []),
