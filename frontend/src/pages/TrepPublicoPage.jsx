@@ -16,7 +16,6 @@ export default function TrepPublicoPage() {
   const [idEleccion, setIdEleccion] = useState("");
   const [localizador, setLocalizador] = useState(null);
   const [numeroDirecto, setNumeroDirecto] = useState("");
-  const [numeroEstructura, setNumeroEstructura] = useState("");
   const [rutaNodos, setRutaNodos] = useState([]);
   const [idRecinto, setIdRecinto] = useState("");
   const [idMesa, setIdMesa] = useState("");
@@ -35,7 +34,6 @@ export default function TrepPublicoPage() {
     if (!idEleccion) return;
     setActa(null);
     setNumeroDirecto("");
-    setNumeroEstructura("");
     setRutaNodos([]);
     setIdRecinto("");
     setIdMesa("");
@@ -46,7 +44,7 @@ export default function TrepPublicoPage() {
     solicitudActaRef.current += 1;
     setActa(null);
     setErrorActa("");
-  }, [numeroDirecto, numeroEstructura, rutaNodos, idRecinto, idMesa]);
+  }, [numeroDirecto, rutaNodos, idRecinto, idMesa]);
 
   const filtrosEstructura = useMemo(
     () => construirFiltrosEstructura(localizador || {}, rutaNodos, idRecinto),
@@ -59,18 +57,14 @@ export default function TrepPublicoPage() {
         const coincideDirecta = numeroDirecto.trim()
           ? String(anfora.numero_anfora).toLowerCase().includes(numeroDirecto.trim().toLowerCase())
           : true;
-        const coincideNumeroEstructura = !numeroEstructura.trim() || (
-          String(anfora.numero_anfora) === numeroEstructura.trim()
-        );
-        return coincideDirecta && coincideNumeroEstructura;
+        return coincideDirecta;
       }),
-  ), [idMesa, idRecinto, localizador, numeroDirecto, numeroEstructura, rutaNodos]);
+  ), [idMesa, idRecinto, localizador, numeroDirecto, rutaNodos]);
 
   const seleccionarNodo = (indice, idNodo) => {
     setRutaNodos((anterior) => [...anterior.slice(0, indice), idNodo]);
     setIdRecinto("");
     setIdMesa("");
-    setNumeroEstructura("");
     setNumeroDirecto("");
   };
 
@@ -116,7 +110,6 @@ export default function TrepPublicoPage() {
                   setRutaNodos([]);
                   setIdRecinto("");
                   setIdMesa("");
-                  setNumeroEstructura("");
                 }}
                 className="mt-1 font-data"
                 placeholder="Número de ánfora"
@@ -127,22 +120,21 @@ export default function TrepPublicoPage() {
 
           <div className="mt-5 border-t border-slate-100 pt-5">
             <div className="mb-2 text-[10px] font-data uppercase tracking-widest text-slate-500">O filtre por estructura electoral</div>
-            <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-5">
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
               {nivelesNodos.map((nivel) => (
                 <Select key={nivel.indice} value={rutaNodos[nivel.indice] || ""} onValueChange={(valor) => seleccionarNodo(nivel.indice, valor)}>
                   <SelectTrigger data-testid={`filtro-publico-nodo-${nivel.indice}`}><SelectValue placeholder={nivel.etiqueta} /></SelectTrigger>
                   <SelectContent>{nivel.nodos.map((nodo) => <SelectItem key={nodo.id} value={nodo.id}>{nodo.nombre_nodo}</SelectItem>)}</SelectContent>
                 </Select>
               ))}
-              <Select value={idRecinto} onValueChange={(valor) => { setIdRecinto(valor); setIdMesa(""); setNumeroEstructura(""); setNumeroDirecto(""); }} disabled={!idNodoTerminal}>
+              <Select value={idRecinto} onValueChange={(valor) => { setIdRecinto(valor); setIdMesa(""); setNumeroDirecto(""); }} disabled={!idNodoTerminal}>
                 <SelectTrigger data-testid="filtro-publico-recinto"><SelectValue placeholder="Recinto" /></SelectTrigger>
                 <SelectContent>{recintos.map((recinto) => <SelectItem key={recinto.id} value={recinto.id}>{recinto.nombre}</SelectItem>)}</SelectContent>
               </Select>
-              <Select value={idMesa} onValueChange={(valor) => { setIdMesa(valor); setNumeroEstructura(""); setNumeroDirecto(""); }} disabled={!idRecinto}>
+              <Select value={idMesa} onValueChange={(valor) => { setIdMesa(valor); setNumeroDirecto(""); }} disabled={!idRecinto}>
                 <SelectTrigger data-testid="filtro-publico-mesa"><SelectValue placeholder="Mesa" /></SelectTrigger>
                 <SelectContent>{mesas.map((mesa) => <SelectItem key={mesa.id} value={mesa.id}>Mesa {mesa.numero_mesa}</SelectItem>)}</SelectContent>
               </Select>
-              <Input value={numeroEstructura} onChange={(evento) => { setNumeroEstructura(evento.target.value); setNumeroDirecto(""); }} placeholder="N° de ánfora" className={`font-data ${nivelesNodos.length > 1 ? "md:col-span-2 xl:col-span-1" : ""}`} disabled={!idNodoTerminal} data-testid="buscar-anfora-en-estructura" />
             </div>
           </div>
         </section>
