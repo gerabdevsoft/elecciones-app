@@ -498,8 +498,8 @@ class ConteoFranja(BaseModel):
     """Recuento independiente por franja (válidos por candidato, blancos, nulos)."""
     id_franja: str
     votos_por_candidato: dict = {}  # {id_candidato: int}
-    votos_blancos: int = 0
-    votos_nulos: int = 0
+    votos_blancos: int = Field(default=0, ge=0)
+    votos_nulos: int = Field(default=0, ge=0)
 
 class EntradaBitacora(BaseModel):
     id_admin: str
@@ -837,6 +837,51 @@ async def _permisos_operativos(usuario: dict, id_eleccion: str) -> dict:
     }
 
 
+def _validar_totales_conteos(conteos: list, cantidad_votantes: Optional[int]) -> None:
+    if (
+        not isinstance(cantidad_votantes, int)
+        or isinstance(cantidad_votantes, bool)
+        or cantidad_votantes < 0
+    ):
+        raise HTTPException(
+            409,
+            "El ánfora no tiene una cantidad válida de votantes habilitados registrada",
+        )
+    for conteo in conteos:
+        valores = conteo.model_dump() if isinstance(conteo, ConteoFranja) else conteo
+        votos_candidatos = list((valores.get("votos_por_candidato") or {}).values())
+        votos = votos_candidatos + [
+            valores.get("votos_blancos", 0),
+            valores.get("votos_nulos", 0),
+        ]
+        if any(
+            not isinstance(voto, int) or isinstance(voto, bool) or voto < 0
+            for voto in votos
+        ):
+            raise HTTPException(
+                422,
+                f"Los votos de candidatos, blancos y nulos de la franja "
+                f"{valores.get('id_franja', '')} deben ser enteros no negativos",
+            )
+        total = sum(votos)
+        if total > cantidad_votantes:
+            raise HTTPException(
+                422,
+                f"La suma de votos de la franja {valores.get('id_franja', '')} "
+                f"({total}) supera los {cantidad_votantes} votantes habilitados del ánfora",
+            )
+
+
+async def _validar_conteos_acta_guardados(acta: dict) -> None:
+    anfora = await db.anforas_mesa.find_one(
+        {"id": acta.get("id_anfora"), "id_eleccion": acta.get("id_eleccion")},
+        {"_id": 0, "cantidad_votantes": 1},
+    )
+    if not anfora:
+        raise HTTPException(409, "No se encontró el ánfora asociada al acta")
+    _validar_totales_conteos(acta.get("conteos") or [], anfora.get("cantidad_votantes"))
+
+
 async def _obtener_contexto_anfora(id_eleccion: str, id_anfora: Optional[str]) -> dict:
     if not id_anfora:
         return {}
@@ -862,6 +907,7 @@ async def _obtener_contexto_anfora(id_eleccion: str, id_anfora: Optional[str]) -
         "id_mesa": mesa["id"],
         "id_recinto": recinto["id"],
         "numero_anfora": anfora["numero_anfora"],
+        "cantidad_votantes": anfora.get("cantidad_votantes"),
         "tipo_mesa": mesa.get("tipo_mesa"),
         "recinto": recinto["nombre"],
         "ambiente": f"Mesa {mesa['numero_mesa']}",
@@ -876,6 +922,7 @@ async def guardar_acta(req: GuardarActaReq, usuario: dict = Depends(usuario_actu
     if not req.id_anfora:
         raise HTTPException(400, "Debe seleccionar un ánfora")
     contexto_anfora = await _obtener_contexto_anfora(req.id_eleccion, req.id_anfora)
+    _validar_totales_conteos(req.conteos, contexto_anfora.get("cantidad_votantes"))
     if req.id_acta:
         existente = await db.actas.find_one(
             {"id": req.id_acta, "id_eleccion": req.id_eleccion},
@@ -1031,6 +1078,7 @@ async def bloquear_acta(req: BloquearReq, usuario: dict = Depends(usuario_actual
         "bloquear",
         a,
     )
+    await _validar_conteos_acta_guardados(a)
     entrada = EntradaBitacora(
         id_admin=usuario["id"], email_admin=usuario["email"],
         accion="consolidar_bloquear", motivo_textual="Consolidación por validador autorizado"
@@ -1062,6 +1110,7 @@ async def enviar_acta_validacion(req: EnviarActaReq, usuario: dict = Depends(usu
         "enviar",
         acta,
     )
+    await _validar_conteos_acta_guardados(acta)
     if usuario.get("rol") != "admin" and usuario["id"] not in {
         acta.get("id_creador"),
         acta.get("id_operador"),
@@ -3162,6 +3211,7 @@ async def obtener_localizador_anforas(
             "id_mesa": 1,
             "id_recinto": 1,
             "id_papeletas": 1,
+            "cantidad_votantes": 1,
             "path_ancestros": 1,
             "tipo_mesa": 1,
         },

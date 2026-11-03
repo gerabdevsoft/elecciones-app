@@ -390,9 +390,29 @@ export default function CentroComputoPage() {
 
   const totalPorFranja = (idF) => {
     const c = conteos[idF]; if (!c) return { validos: 0, total: 0 };
-    const validos = Object.values(c.votos_por_candidato).reduce((a, b) => a + (Number(b) || 0), 0);
+    const validos = Object.values(c.votos_por_candidato || {}).reduce((a, b) => a + (Number(b) || 0), 0);
     return { validos, total: validos + (c.votos_blancos || 0) + (c.votos_nulos || 0) };
   };
+  const cantidadVotantesHabilitados = Number.isInteger(anforaSeleccionada?.cantidad_votantes)
+    ? anforaSeleccionada.cantidad_votantes
+    : null;
+  const franjasActivas = papeletasActivas.flatMap((papeleta) => papeleta.franjas || []);
+  const franjasExcedidas = cantidadVotantesHabilitados == null
+    ? []
+    : franjasActivas.filter((franja) => totalPorFranja(franja.id_franja).total > cantidadVotantesHabilitados);
+  const franjasConVotosInvalidos = franjasActivas.filter((franja) => {
+    const conteo = conteos[franja.id_franja];
+    if (!conteo) return false;
+    const valores = [
+      ...Object.values(conteo.votos_por_candidato || {}),
+      conteo.votos_blancos,
+      conteo.votos_nulos,
+    ];
+    return valores.some((valor) => !Number.isInteger(Number(valor)) || Number(valor) < 0);
+  });
+  const bloquearGuardadoPorVotantes = cantidadVotantesHabilitados == null
+    || franjasExcedidas.length > 0
+    || franjasConVotosInvalidos.length > 0;
 
   return (
     <div className="max-w-[1600px] mx-auto p-4 sm:p-6 lg:p-8" data-testid="centro-computo-page">
@@ -502,6 +522,19 @@ export default function CentroComputoPage() {
               <span>{anforaSeleccionada.nombre_recinto}</span>
               {tipoMesaSeleccionada && <><span>·</span><span>Mesa {tipoMesaSeleccionada}</span></>}
             </div>
+            <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-blue-200 pt-3" data-testid="votantes-habilitados-anfora">
+              <span className="text-xs font-semibold uppercase tracking-wide text-blue-800">Votantes habilitados en esta ánfora</span>
+              {cantidadVotantesHabilitados == null ? (
+                <span className="text-sm font-bold text-red-700">Cantidad sin registrar</span>
+              ) : (
+                <span className="font-data text-xl font-bold text-blue-900">{cantidadVotantesHabilitados}</span>
+              )}
+            </div>
+            {cantidadVotantesHabilitados == null && (
+              <p className="mt-2 text-xs text-red-700" data-testid="votantes-habilitados-faltantes">
+                Registre la cantidad de votantes de esta ánfora en la estructura electoral antes de guardar el acta.
+              </p>
+            )}
           </div>
 
           {/* Boletas → Franjas (recuento independiente por franja) */}
@@ -537,7 +570,7 @@ export default function CentroComputoPage() {
                               {c.partido && <div className="text-[10px] font-data uppercase tracking-widest text-slate-500">{c.sigla || c.partido}</div>}
                             </div>
                             <Input
-                              type="number" min="0"
+                              type="number" min="0" step="1"
                               value={conteos[fr.id_franja]?.votos_por_candidato[c.id_candidato] ?? 0}
                               onChange={(e) => setVotoCandidato(fr.id_franja, c.id_candidato, e.target.value)}
                             disabled={!puedeEditar}
@@ -551,7 +584,7 @@ export default function CentroComputoPage() {
                         {fr.permite_blancos !== false && (
                           <div>
                             <Label className="text-[10px] font-data uppercase tracking-widest text-slate-500">Votos Blancos</Label>
-                            <Input type="number" min="0" value={conteos[fr.id_franja]?.votos_blancos ?? 0}
+                            <Input type="number" min="0" step="1" value={conteos[fr.id_franja]?.votos_blancos ?? 0}
                               onChange={(e) => setBlancos(fr.id_franja, e.target.value)}
                               disabled={!puedeEditar} className="font-data font-bold" data-testid={`blancos-count-input-${fr.id_franja}`} />
                           </div>
@@ -559,7 +592,7 @@ export default function CentroComputoPage() {
                         {fr.permite_nulos !== false && (
                           <div>
                             <Label className="text-[10px] font-data uppercase tracking-widest text-slate-500">Votos Nulos</Label>
-                            <Input type="number" min="0" value={conteos[fr.id_franja]?.votos_nulos ?? 0}
+                            <Input type="number" min="0" step="1" value={conteos[fr.id_franja]?.votos_nulos ?? 0}
                               onChange={(e) => setNulos(fr.id_franja, e.target.value)}
                               disabled={!puedeEditar} className="font-data font-bold" data-testid={`nulos-count-input-${fr.id_franja}`} />
                           </div>
@@ -571,14 +604,21 @@ export default function CentroComputoPage() {
                           <div className="text-lg font-bold">{tot.validos}</div>
                         </div>
                         <div>
-                          <div className="text-[10px] uppercase tracking-widest text-slate-500">Total franja</div>
-                          <div className="text-lg font-bold">{tot.total}</div>
+                          <div className="text-[10px] uppercase tracking-widest text-slate-500">Total / habilitados</div>
+                          <div className={`text-lg font-bold ${cantidadVotantesHabilitados != null && tot.total > cantidadVotantesHabilitados ? "text-red-700" : ""}`}>
+                            {tot.total} / {cantidadVotantesHabilitados ?? "—"}
+                          </div>
                         </div>
                         <div className="text-right">
                           <div className="text-[10px] uppercase tracking-widest text-slate-500">Regla</div>
                           <div className="text-[10px]">{fr.calcular_porcentaje_sobre?.replaceAll("_", " ")}</div>
                         </div>
                       </div>
+                      {cantidadVotantesHabilitados != null && tot.total > cantidadVotantesHabilitados && (
+                        <div className="mx-3 mb-3 rounded-md border border-red-200 bg-red-50 p-2 text-xs font-medium text-red-800" data-testid={`votos-excedidos-${fr.id_franja}`}>
+                          Los votos de esta franja superan los {cantidadVotantesHabilitados} votantes habilitados.
+                        </div>
+                      )}
                     </div>
                   );
                 })}
@@ -623,8 +663,15 @@ export default function CentroComputoPage() {
             </details>
           )}
 
+          {bloquearGuardadoPorVotantes && cantidadVotantesHabilitados != null && (
+            <div className="mt-4 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-800" data-testid="error-limite-votantes">
+              {franjasExcedidas.length > 0
+                ? "No se puede guardar: en una o más franjas, la suma de votos de candidatos, blancos y nulos supera los votantes habilitados."
+                : "Verifique que todos los votos sean números enteros no negativos."}
+            </div>
+          )}
           <div className="mt-6 grid grid-cols-1 gap-2 border-t border-slate-200 pt-4 sm:grid-cols-2" data-testid="barra-acciones-acta">
-            <Button variant="outline" onClick={guardar} disabled={!puedeEditar} data-testid="acta-enable-edit-button" className="h-10 w-full justify-center">
+            <Button variant="outline" onClick={guardar} disabled={!puedeEditar || bloquearGuardadoPorVotantes} data-testid="acta-enable-edit-button" className="h-10 w-full justify-center">
               <Save className="w-4 h-4 mr-2" /> Guardar borrador
             </Button>
             {puedeCargar && (
