@@ -86,6 +86,9 @@ export default function CentroComputoPage() {
   const tipoMesaSeleccionada = (localizador?.mesas || []).find(
     (mesa) => mesa.id === anforaSeleccionada?.id_mesa,
   )?.tipo_mesa;
+  const tipoVotoSeleccionado = procesoActivo?.tipo === "universitaria"
+    ? { docente: "Docente", estudiante: "Estudiante" }[tipoMesaSeleccionada]
+    : null;
   const [modalDesbloqueo, setModalDesbloqueo] = useState(false);
   const [motivoTextual, setMotivoTextual] = useState("");
   const [desbloqueando, setDesbloqueando] = useState(false);
@@ -520,7 +523,14 @@ export default function CentroComputoPage() {
               <span>Mesa {anforaSeleccionada.numero_mesa}</span>
               <span>·</span>
               <span>{anforaSeleccionada.nombre_recinto}</span>
-              {tipoMesaSeleccionada && <><span>·</span><span>Mesa {tipoMesaSeleccionada}</span></>}
+              {tipoVotoSeleccionado && (
+                <>
+                  <span>·</span>
+                  <span className="stre-badge bg-blue-50 text-blue-700" data-testid="tipo-voto-universitario">
+                    Tipo de voto: {tipoVotoSeleccionado}
+                  </span>
+                </>
+              )}
             </div>
             <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-blue-200 pt-3" data-testid="votantes-habilitados-anfora">
               <span className="text-xs font-semibold uppercase tracking-wide text-blue-800">Votantes habilitados en esta ánfora</span>
