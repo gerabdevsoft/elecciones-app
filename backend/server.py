@@ -525,6 +525,7 @@ class Acta(BaseModel):
     id_operador: Optional[str] = None
     id_creador: Optional[str] = None
     id_enviado_por: Optional[str] = None
+    enviado_en: Optional[str] = None
     id_validador: Optional[str] = None
     estado: Literal["borrador", "enviado", "observado", "bloqueado"] = "borrador"
     observacion_validacion: Optional[str] = None
@@ -1118,14 +1119,16 @@ async def enviar_acta_validacion(req: EnviarActaReq, usuario: dict = Depends(usu
         raise HTTPException(403, "Solo el operador creador puede enviar el acta")
     if acta.get("estado", "borrador") not in {"borrador", "observado"}:
         raise HTTPException(409, "El acta no se encuentra disponible para envío")
+    fecha_envio = datetime.now(timezone.utc).isoformat()
     await db.actas.update_one(
         {"id": req.id_acta},
         {
             "$set": {
                 "estado": "enviado",
                 "id_enviado_por": usuario["id"],
+                "enviado_en": fecha_envio,
                 "observacion_validacion": None,
-                "actualizado_en": datetime.now(timezone.utc).isoformat(),
+                "actualizado_en": fecha_envio,
             },
         },
     )
@@ -1165,6 +1168,88 @@ async def observar_acta(req: ObservarActaReq, usuario: dict = Depends(usuario_ac
 @api.get("/operacion/procesos/{id_eleccion}/permisos")
 async def permisos_operacion(id_eleccion: str, usuario: dict = Depends(usuario_actual)):
     return await _permisos_operativos(usuario, id_eleccion)
+
+
+@api.get("/operacion/procesos/{id_eleccion}/actas-pendientes-validacion")
+async def listar_actas_pendientes_validacion(
+    id_eleccion: str,
+    usuario: dict = Depends(usuario_actual),
+):
+    if usuario.get("rol") not in {"admin", "operador", "auditor"}:
+        raise HTTPException(403, "No tiene acceso a la bandeja de validación")
+
+    asignaciones = []
+    if usuario.get("rol") != "admin":
+        asignaciones = await _asignaciones_operativas_usuario(
+            usuario["id"],
+            id_eleccion,
+            funcion="validacion",
+        )
+        if not asignaciones:
+            raise HTTPException(403, "No tiene una asignación de validación para este proceso")
+        filtro_anforas = _filtro_anforas_asignadas(asignaciones)
+        anforas_asignadas = await db.anforas_mesa.find(
+            {"id_eleccion": id_eleccion, **filtro_anforas},
+            {"_id": 0, "id": 1},
+        ).to_list(20000)
+        ids_anforas = [anfora["id"] for anfora in anforas_asignadas]
+        if not ids_anforas:
+            return []
+    else:
+        ids_anforas = None
+
+    filtro_actas = {
+        "id_eleccion": id_eleccion,
+        "estado": "enviado",
+        "esta_bloqueada": {"$ne": True},
+    }
+    if ids_anforas is not None:
+        filtro_actas["id_anfora"] = {"$in": ids_anforas}
+
+    campos = {
+        "_id": 0,
+        "id": 1,
+        "id_eleccion": 1,
+        "id_anfora": 1,
+        "id_mesa": 1,
+        "id_recinto": 1,
+        "tipo_mesa": 1,
+        "numero_anfora": 1,
+        "recinto": 1,
+        "ambiente": 1,
+        "enviado_en": 1,
+        "actualizado_en": 1,
+        "id_creador": 1,
+        "id_operador": 1,
+        "id_enviado_por": 1,
+        "observacion_validacion": 1,
+    }
+    actas = await db.actas.find(filtro_actas, campos).to_list(20000)
+    if usuario.get("rol") != "admin":
+        # Un operador no debe validar un acta que él mismo registró o envió.
+        actas = [
+            acta for acta in actas
+            if usuario["id"] not in {
+                acta.get("id_creador"),
+                acta.get("id_operador"),
+                acta.get("id_enviado_por"),
+            }
+        ]
+    ids_mesas = list({acta.get("id_mesa") for acta in actas if acta.get("id_mesa")})
+    mesas = await db.mesas_sufragio.find(
+        {"id_eleccion": id_eleccion, "id": {"$in": ids_mesas}},
+        {"_id": 0, "id": 1, "numero_mesa": 1, "tipo_mesa": 1},
+    ).to_list(20000) if ids_mesas else []
+    mesas_por_id = {mesa["id"]: mesa for mesa in mesas}
+    for acta in actas:
+        mesa = mesas_por_id.get(acta.get("id_mesa"), {})
+        acta["numero_mesa"] = mesa.get("numero_mesa")
+        acta["tipo_mesa"] = acta.get("tipo_mesa") or mesa.get("tipo_mesa")
+        acta["enviado_en"] = acta.get("enviado_en") or acta.get("actualizado_en")
+        for campo in ("id_creador", "id_operador", "id_enviado_por"):
+            acta.pop(campo, None)
+    actas.sort(key=lambda acta: acta.get("enviado_en") or acta.get("actualizado_en") or "")
+    return actas
 
 
 @api.get("/admin/usuarios-operativos")
@@ -2259,9 +2344,19 @@ async def resultados_publicos(id_eleccion: str):
             "id_anfora": {"$exists": True, "$ne": None},
             "esta_bloqueada": True,
         },
-        {"_id": 0, "id_anfora": 1, "numero_anfora": 1, "actualizado_en": 1},
+        {
+            "_id": 0,
+            "id": 1,
+            "id_anfora": 1,
+            "numero_anfora": 1,
+            "recinto": 1,
+            "ambiente": 1,
+            "tipo_mesa": 1,
+            "actualizado_en": 1,
+        },
     ).sort("actualizado_en", -1).to_list(20000)
     escrutadas = len({acta["id_anfora"] for acta in actas})
+    actas_recientes = _actas_unicas_por_anfora(actas)[:10]
     faltantes = max(0, total_anforas - escrutadas)
     porcentaje = lambda valor: round((valor / total_anforas * 100) if total_anforas else 0, 2)
     consolidado["anforas"] = {
@@ -2271,6 +2366,7 @@ async def resultados_publicos(id_eleccion: str):
         "porcentaje_escrutadas": porcentaje(escrutadas),
         "porcentaje_faltantes": porcentaje(faltantes),
     }
+    consolidado["actas_recientes"] = actas_recientes
     if consolidado["proceso"]["tipo"] == "universitaria":
         consolidado["universitario"] = await _calcular_resultado_universitario(id_eleccion)
     return consolidado

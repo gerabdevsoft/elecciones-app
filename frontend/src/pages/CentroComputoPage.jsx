@@ -71,6 +71,8 @@ export default function CentroComputoPage() {
   const [modalObservacion, setModalObservacion] = useState(false);
   const [observacion, setObservacion] = useState("");
   const [observando, setObservando] = useState(false);
+  const [modalConsolidacion, setModalConsolidacion] = useState(false);
+  const [consolidando, setConsolidando] = useState(false);
   const inputFile = useRef(null);
   const solicitudAnforaRef = useRef(0);
 
@@ -311,15 +313,17 @@ export default function CentroComputoPage() {
 
   const consolidarBloquear = async () => {
     if (!actaActual) { toast.warning("Guarde el acta antes de consolidar."); return; }
-    if (!window.confirm("¿Consolidar y bloquear? Solo un administrador podrá desbloquear con motivo textual.")) return;
     try {
+      setConsolidando(true);
       await api.post("/centro-computo/bloquear", { id_acta: actaActual.id });
       toast.success("Acta consolidada y bloqueada.");
+      setModalConsolidacion(false);
       const { data } = await api.get(`/actas/${actaActual.id}`);
       setActaActual(data);
     } catch (e) {
       toast.error(formatearError(e?.response?.data?.detail));
     } finally {
+      setConsolidando(false);
       cargarLocalizador();
     }
   };
@@ -694,7 +698,7 @@ export default function CentroComputoPage() {
                 <AlertTriangle className="w-4 h-4 mr-2" /> Observar
               </Button>
             )}
-            <Button onClick={consolidarBloquear} disabled={esBloqueado || !actaActual || !puedeValidar}
+            <Button onClick={() => setModalConsolidacion(true)} disabled={esBloqueado || !actaActual || !puedeValidar}
               className="h-10 w-full justify-center bg-[#059669] hover:bg-[#047857]" data-testid="acta-consolidate-block-button">
               <Lock className="w-4 h-4 mr-2" /> Consolidar y Bloquear
             </Button>
@@ -702,6 +706,34 @@ export default function CentroComputoPage() {
         </div>
       </div>
       )}
+
+      <Dialog open={modalConsolidacion} onOpenChange={(abierto) => {
+        if (!consolidando) setModalConsolidacion(abierto);
+      }}>
+        <DialogContent data-testid="modal-confirmar-consolidacion">
+          <DialogHeader>
+            <DialogTitle>Confirmar consolidación del acta</DialogTitle>
+            <DialogDescription>
+              Al confirmar, el acta quedará bloqueada y sus resultados se publicarán. Solo un administrador podrá desbloquearla con una justificación.
+            </DialogDescription>
+          </DialogHeader>
+          {actaActual && (
+            <div className="rounded-md border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-900">
+              Ánfora {actaActual.numero_anfora || anforaSeleccionada?.numero_anfora}
+              {actaActual.recinto ? ` · ${actaActual.recinto}` : ""}
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setModalConsolidacion(false)} disabled={consolidando}>
+              Cancelar
+            </Button>
+            <Button onClick={consolidarBloquear} disabled={consolidando} className="bg-emerald-700 hover:bg-emerald-800" data-testid="confirmar-consolidacion-button">
+              <Lock className="mr-2 h-4 w-4" />
+              {consolidando ? "Consolidando…" : "Confirmar y bloquear"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={modalDesbloqueo} onOpenChange={(abierto) => {
         if (desbloqueando) return;

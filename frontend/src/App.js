@@ -4,6 +4,7 @@ import { Toaster } from "sonner";
 import LoginPage from "@/pages/LoginPage";
 import SeleccionProcesoPage from "@/pages/SeleccionProcesoPage";
 import CentroComputoPage from "@/pages/CentroComputoPage";
+import ValidacionActasPage from "@/pages/ValidacionActasPage";
 import BitacoraPage from "@/pages/BitacoraPage";
 import ResultadosPage from "@/pages/ResultadosPage";
 import TrepPublicoPage from "@/pages/TrepPublicoPage";
@@ -13,7 +14,7 @@ import DisenoPapeletaPage from "@/pages/DisenoPapeletaPage";
 import ImprimirPapeletaPage from "@/pages/ImprimirPapeletaPage";
 import EstructuraElectoralPage from "@/pages/EstructuraElectoralPage";
 import AsignacionesOperativasPage from "@/pages/AsignacionesOperativasPage";
-import { Vote, LogOut, Layers, ClipboardList, BarChart3, Radio, ShieldCheck, Settings2, Users } from "lucide-react";
+import { Vote, LogOut, Layers, ClipboardList, ClipboardCheck, BarChart3, Radio, ShieldCheck, Settings2, Users } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import "@/App.css";
 
@@ -51,6 +52,7 @@ function Cabecera() {
   const enlaces = [];
   if (usuario.rol !== "resultados") {
     enlaces.push({ to: "/centro-computo", label: "Centro de Cómputo", icon: ClipboardList, testid: "nav-centro-computo" });
+    enlaces.push({ to: "/validacion-actas", label: "Validación de actas", icon: ClipboardCheck, testid: "nav-validacion-actas" });
   }
   if (["admin", "resultados"].includes(usuario.rol)) {
     enlaces.push({ to: "/resultados", label: "Resultados", icon: Radio, testid: "nav-resultados" });
@@ -138,6 +140,9 @@ export default function App() {
           } />
           <Route path="/centro-computo" element={
             <RequiereAuth><RequiereProceso><RequiereRol roles={["admin", "operador", "auditor"]}><AppShell><CentroComputoPage /></AppShell></RequiereRol></RequiereProceso></RequiereAuth>
+          } />
+          <Route path="/validacion-actas" element={
+            <RequiereAuth><RequiereProceso><RequiereRol roles={["admin", "operador", "auditor"]}><AppShell><ValidacionActasPage /></AppShell></RequiereRol></RequiereProceso></RequiereAuth>
           } />
           <Route path="/resumen" element={<Navigate to="/resultados-publicos" replace />} />
           <Route path="/resultados" element={

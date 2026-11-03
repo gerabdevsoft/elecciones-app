@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
-import { Radio, Trophy } from "lucide-react";
+import { AlertCircle, CheckCircle2, Clock3, MapPin, Radio, RefreshCw, Trophy } from "lucide-react";
 import { Bar, BarChart, Cell, Line, LineChart, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { api } from "@/lib/api";
+import { api, formatearError } from "@/lib/api";
+import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { CabeceraPublica } from "@/pages/TrepPublicoPage";
 
@@ -12,35 +13,75 @@ export default function ResultadosPublicosPage() {
   const [idEleccion, setIdEleccion] = useState("");
   const [datos, setDatos] = useState(null);
   const [tipoGrafica, setTipoGrafica] = useState("barras");
-  const [conexion, setConexion] = useState("conectando");
+  const [conexion, setConexion] = useState("actualizando");
+  const [errorCarga, setErrorCarga] = useState("");
 
+  const cargarProcesos = useCallback(async () => {
+    try {
+      const { data } = await api.get("/publico/procesos");
+      setProcesos(data);
+      setIdEleccion((actual) => actual || data[0]?.id_eleccion || "");
+      setErrorCarga("");
+    } catch (error) {
+      setErrorCarga(formatearError(error?.response?.data?.detail) || "No se pudieron cargar los procesos electorales.");
+    }
+  }, []);
   const cargar = useCallback(async () => {
-    if (!idEleccion) return;
-    const { data } = await api.get(`/publico/procesos/${idEleccion}/resultados`);
-    setDatos(data);
+    if (!idEleccion) return false;
+    try {
+      const { data } = await api.get(`/publico/procesos/${idEleccion}/resultados`);
+      setDatos(data);
+      setErrorCarga("");
+      return true;
+    } catch (error) {
+      setErrorCarga(formatearError(error?.response?.data?.detail) || "No se pudieron actualizar los resultados.");
+      return false;
+    }
   }, [idEleccion]);
 
   useEffect(() => {
-    api.get("/publico/procesos").then(({ data }) => {
-      setProcesos(data);
-      setIdEleccion(data[0]?.id_eleccion || "");
-    });
-  }, []);
-  useEffect(() => { cargar(); }, [cargar]);
+    cargarProcesos();
+  }, [cargarProcesos]);
   useEffect(() => {
     if (!idEleccion) return undefined;
-    const base = (process.env.REACT_APP_BACKEND_URL || window.location.origin).replace(/^http/, "ws");
-    const socket = new WebSocket(`${base}/api/ws/publico/${idEleccion}`);
-    socket.onopen = () => setConexion("en vivo");
-    socket.onmessage = () => cargar();
-    socket.onclose = () => setConexion("reconectando");
-    socket.onerror = () => setConexion("reconectando");
-    const pulso = window.setInterval(() => { if (socket.readyState === WebSocket.OPEN) socket.send("pulso"); }, 25000);
-    return () => { window.clearInterval(pulso); socket.close(); };
+    let activa = true;
+    setDatos(null);
+    const actualizar = async () => {
+      setConexion("actualizando");
+      const actualizado = await cargar();
+      if (activa) setConexion(actualizado ? "actualizado" : "reintentando");
+    };
+    actualizar();
+    const intervalo = window.setInterval(actualizar, 15000);
+    return () => {
+      activa = false;
+      window.clearInterval(intervalo);
+    };
   }, [cargar, idEleccion]);
 
   const esUniversitaria = datos?.proceso?.tipo === "universitaria";
-  return <div className="min-h-screen bg-slate-100" data-testid="resultados-publicos-page"><CabeceraPublica /><main className="mx-auto max-w-7xl p-4 sm:p-6 lg:p-8"><div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between"><div><div className="flex items-center gap-2 text-[10px] font-data uppercase tracking-widest text-emerald-700"><Radio className="w-3 h-3" /> {conexion}</div><h1 className="mt-2 font-display text-3xl font-extrabold text-slate-900">Resultados electorales</h1><p className="mt-1 text-slate-600">Datos de actas consolidadas y bloqueadas.</p></div><div className="flex w-full flex-wrap gap-2 lg:w-auto"><Select value={idEleccion} onValueChange={setIdEleccion}><SelectTrigger className="w-full sm:w-[420px]" data-testid="seleccionar-eleccion-resultados-publicos"><SelectValue placeholder="Elección" /></SelectTrigger><SelectContent>{procesos.map((proceso) => <SelectItem key={proceso.id_eleccion} value={proceso.id_eleccion}>{proceso.nombre}</SelectItem>)}</SelectContent></Select><Select value={tipoGrafica} onValueChange={setTipoGrafica}><SelectTrigger className="w-full sm:w-[150px]" data-testid="tipo-grafica-publica"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="barras">Barras</SelectItem><SelectItem value="torta">Torta</SelectItem><SelectItem value="lineas">Líneas</SelectItem></SelectContent></Select></div></div>{!datos ? <div className="mt-8 border border-slate-200 bg-white p-8 text-sm text-slate-400" data-testid="cargando-resultados-publicos">Cargando resultados…</div> : <><section className="mt-8 grid grid-cols-1 gap-4 md:grid-cols-3" data-testid="avance-publico-anforas"><TarjetaAvance titulo="Ánforas totales" valor={datos.anforas.total} porcentaje="100" color="#1E3A8A" /><TarjetaAvance titulo="Actas consolidadas" valor={datos.anforas.escrutadas} porcentaje={datos.anforas.porcentaje_escrutadas} color="#059669" /><TarjetaAvance titulo="Actas faltantes" valor={datos.anforas.faltantes} porcentaje={datos.anforas.porcentaje_faltantes} color="#D97706" /></section><section className="mt-8 space-y-5">{esUniversitaria ? <ResultadosUniversitarios datos={datos.universitario} tipoGrafica={tipoGrafica} /> : Object.entries(datos.resultados).map(([idFranja, resultado]) => <ResultadoGeneral key={idFranja} resultado={resultado} tipoGrafica={tipoGrafica} />)}</section></>}</main></div>;
+  return <div className="min-h-screen bg-slate-100" data-testid="resultados-publicos-page"><CabeceraPublica /><main className="mx-auto max-w-7xl p-4 sm:p-6 lg:p-8"><div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between"><div><div className="flex items-center gap-2 text-[10px] font-data uppercase tracking-widest text-emerald-700"><Radio className="w-3 h-3" /> Actualización automática · {conexion}</div><h1 className="mt-2 font-display text-3xl font-extrabold text-slate-900">Resultados electorales</h1><p className="mt-1 text-slate-600">Datos de actas consolidadas y bloqueadas.</p></div><div className="flex w-full flex-wrap gap-2 lg:w-auto"><Select value={idEleccion} onValueChange={setIdEleccion}><SelectTrigger className="w-full sm:w-[420px]" data-testid="seleccionar-eleccion-resultados-publicos"><SelectValue placeholder="Elección" /></SelectTrigger><SelectContent>{procesos.map((proceso) => <SelectItem key={proceso.id_eleccion} value={proceso.id_eleccion}>{proceso.nombre}</SelectItem>)}</SelectContent></Select><Select value={tipoGrafica} onValueChange={setTipoGrafica}><SelectTrigger className="w-full sm:w-[150px]" data-testid="tipo-grafica-publica"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="barras">Barras</SelectItem><SelectItem value="torta">Torta</SelectItem><SelectItem value="lineas">Líneas</SelectItem></SelectContent></Select></div></div>{errorCarga && datos ? <div className="mt-5 flex flex-wrap items-center justify-between gap-3 border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900" role="status"><span><AlertCircle className="mr-2 inline h-4 w-4" />No se pudo actualizar ahora. Se reintentará automáticamente.</span><Button variant="outline" size="sm" onClick={cargar}><RefreshCw className="h-3.5 w-3.5" /> Reintentar</Button></div> : null}{!datos ? errorCarga ? <div className="mt-8 border border-amber-200 bg-amber-50 p-6 text-sm text-amber-900" role="alert"><p>{errorCarga}</p><Button variant="outline" size="sm" className="mt-4" onClick={idEleccion ? cargar : cargarProcesos}><RefreshCw className="h-3.5 w-3.5" /> Reintentar</Button></div> : <div className="mt-8 border border-slate-200 bg-white p-8 text-sm text-slate-400" data-testid="cargando-resultados-publicos">Cargando resultados…</div> : <><section className="mt-8 grid grid-cols-1 gap-4 md:grid-cols-3" data-testid="avance-publico-anforas"><TarjetaAvance titulo="Ánforas totales" valor={datos.anforas.total} porcentaje="100" color="#1E3A8A" /><TarjetaAvance titulo="Actas consolidadas" valor={datos.anforas.escrutadas} porcentaje={datos.anforas.porcentaje_escrutadas} color="#059669" /><TarjetaAvance titulo="Actas faltantes" valor={datos.anforas.faltantes} porcentaje={datos.anforas.porcentaje_faltantes} color="#D97706" /></section><section className="mt-8 grid grid-cols-1 items-start gap-6 xl:grid-cols-[minmax(0,1fr)_20rem]"><div className="min-w-0 space-y-5">{esUniversitaria ? <ResultadosUniversitarios datos={datos.universitario} tipoGrafica={tipoGrafica} /> : Object.entries(datos.resultados).map(([idFranja, resultado]) => <ResultadoGeneral key={idFranja} resultado={resultado} tipoGrafica={tipoGrafica} />)}</div><ActasRecientes actas={datos.actas_recientes || []} /></section></>}</main></div>;
+}
+
+function ActasRecientes({ actas }) {
+  return <aside className="border border-slate-200 bg-white" data-testid="actas-recientes-consolidadas">
+    <div className="flex items-center gap-3 border-b border-slate-200 px-4 py-4">
+      <span className="grid h-9 w-9 place-items-center rounded-md bg-emerald-50 text-emerald-700"><CheckCircle2 className="h-5 w-5" /></span>
+      <div><h2 className="font-display font-bold text-slate-900">Actas recién consolidadas</h2><p className="text-xs text-slate-500">Actualización en tiempo real</p></div>
+    </div>
+    {!actas.length ? <div className="p-5 text-sm text-slate-500">Aún no hay actas consolidadas.</div> : <ol className="divide-y divide-slate-100">
+      {actas.map((acta) => <li key={acta.id || acta.id_anfora} className="px-4 py-4 transition-colors hover:bg-slate-50">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <div className="font-data text-sm font-bold text-slate-900">Ánfora {acta.numero_anfora || "—"}</div>
+            <div className="mt-1 flex items-start gap-1.5 text-xs text-slate-600"><MapPin className="mt-0.5 h-3.5 w-3.5 shrink-0 text-slate-400" /><span className="min-w-0 break-words">{acta.recinto || "Recinto sin nombre"}{acta.ambiente ? ` · ${acta.ambiente}` : ""}</span></div>
+          </div>
+          {acta.tipo_mesa && <span className="shrink-0 rounded-full bg-indigo-50 px-2 py-1 text-[10px] font-semibold uppercase text-indigo-700">{acta.tipo_mesa}</span>}
+        </div>
+        <div className="mt-2 flex items-center gap-1.5 text-[11px] text-slate-400"><Clock3 className="h-3 w-3" />{acta.actualizado_en ? new Date(acta.actualizado_en).toLocaleString("es-BO") : "Fecha no disponible"}</div>
+      </li>)}
+    </ol>}
+  </aside>;
 }
 
 function ResultadoGeneral({ resultado, tipoGrafica }) {
