@@ -109,6 +109,7 @@ export default function ValidacionActasPage() {
   const [cargandoCola, setCargandoCola] = useState(true);
   const [errorCola, setErrorCola] = useState("");
   const [seleccionada, setSeleccionada] = useState(null);
+  const [colaContraida, setColaContraida] = useState(false);
   const [acta, setActa] = useState(null);
   const [cargandoActa, setCargandoActa] = useState(false);
   const [errorActa, setErrorActa] = useState("");
@@ -224,6 +225,7 @@ export default function ValidacionActasPage() {
     const solicitud = solicitudRef.current + 1;
     solicitudRef.current = solicitud;
     setSeleccionada(item);
+    setColaContraida(true);
     setActa(null);
     setZoom(1);
     setRotacion(0);
@@ -250,6 +252,7 @@ export default function ValidacionActasPage() {
       setModalAbierto(false);
       setSeleccionada(null);
       setActa(null);
+      setColaContraida(false);
       await cargarCola();
     } catch (error) {
       toast.error(formatearError(error?.response?.data?.detail) || "No se pudo consolidar el acta.");
@@ -308,7 +311,26 @@ export default function ValidacionActasPage() {
           </section>
         ) : null}
 
-        <div className="grid items-start gap-5 lg:grid-cols-[minmax(330px,0.82fr)_minmax(0,1.55fr)]">
+        <div className={`grid items-start gap-5 ${colaContraida ? "lg:grid-cols-[104px_minmax(0,1fr)]" : "lg:grid-cols-[minmax(240px,0.65fr)_minmax(0,2fr)]"}`}>
+          {colaContraida ? (
+            <section className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+              <Button
+                type="button"
+                variant="ghost"
+                onClick={() => setColaContraida(false)}
+                aria-label="Mostrar bandeja de pendientes"
+                title="Mostrar bandeja de pendientes"
+                className="flex h-auto w-full items-center justify-between gap-2 px-3 py-3 text-xs text-slate-700 hover:bg-blue-50 lg:flex-col lg:justify-center lg:py-5"
+              >
+                <span className="flex items-center gap-2">
+                  <ArrowRight className="h-4 w-4 rotate-180 text-blue-700" />
+                  <span className="lg:hidden">Mostrar bandeja</span>
+                  <span className="hidden lg:inline">Bandeja</span>
+                </span>
+                <span className="font-data text-lg font-bold text-blue-900">{cola.length}</span>
+              </Button>
+            </section>
+          ) : (
           <section className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
             <header className="flex items-center justify-between border-b border-slate-200 px-4 py-4 sm:px-5">
               <div>
@@ -415,6 +437,7 @@ export default function ValidacionActasPage() {
               </footer>
             ) : null}
           </section>
+          )}
 
           <section className="min-h-[440px] overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
             {!seleccionada ? (
@@ -663,7 +686,7 @@ export default function ValidacionActasPage() {
                               type="button"
                               onClick={() => setModalAbierto(true)}
                               disabled={!puedeValidar || consolidando}
-                              className="h-11 w-full bg-[#315f4b] px-5 font-semibold text-white shadow-sm transition-colors hover:bg-[#284f3d] sm:w-auto"
+                              className="h-11 w-full bg-[#059669] px-5 font-semibold text-white shadow-sm transition-colors hover:bg-[#047857] sm:w-auto"
                             >
                               <CheckCircle2 className="h-4 w-4" />
                               Consolidar y bloquear
@@ -672,20 +695,6 @@ export default function ValidacionActasPage() {
                         </section>
                       </div>
 
-                      <div className="flex flex-col justify-between gap-3 border-t border-[#e7e9e1] pt-4 sm:flex-row sm:items-center">
-                        <p className="max-w-md text-[11px] leading-5 text-[#89938a]">
-                          Al consolidar, el acta queda bloqueada y se incorpora al resultado del proceso.
-                        </p>
-                        <Button
-                          type="button"
-                          onClick={() => setModalAbierto(true)}
-                          disabled={!puedeValidar || consolidando}
-                          className="h-11 w-full bg-[#315f4b] px-5 font-semibold text-white shadow-sm transition-colors hover:bg-[#284f3d] sm:w-auto"
-                        >
-                          <CheckCircle2 className="h-4 w-4" />
-                          Consolidar y bloquear
-                        </Button>
-                      </div>
                     </div>
                   ) : null}
                 </div>
@@ -717,7 +726,7 @@ export default function ValidacionActasPage() {
             <Button type="button" variant="outline" onClick={() => setModalAbierto(false)} disabled={consolidando} className="border-[#d9dfd5] text-[#53635a]">
               <X className="h-4 w-4" /> Cancelar
             </Button>
-            <Button type="button" onClick={confirmarConsolidacion} disabled={consolidando} className="bg-[#315f4b] text-white hover:bg-[#284f3d]">
+            <Button type="button" onClick={confirmarConsolidacion} disabled={consolidando} className="bg-emerald-700 text-white hover:bg-emerald-800">
               {consolidando ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
               {consolidando ? "Consolidando…" : "Sí, consolidar"}
             </Button>
