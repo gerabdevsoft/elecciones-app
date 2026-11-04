@@ -2308,14 +2308,26 @@ async def acta_publica(id_eleccion: str, id_anfora: str):
         raise HTTPException(404, "Acta consolidada no encontrada")
     proceso = await db.procesos_electorales.find_one(
         {"id_eleccion": id_eleccion, "activo": True},
-        {"_id": 0, "papeletas": 1},
+        {"_id": 0, "papeletas": 1, "tipo": 1},
     )
     if not proceso:
         raise HTTPException(404, "Elección pública no encontrada")
+    anfora = await db.anforas_mesa.find_one(
+        {"id_eleccion": id_eleccion, "id": id_anfora},
+        {
+            "_id": 0,
+            "id": 1,
+            "id_mesa": 1,
+            "nombre": 1,
+            "numero_anfora": 1,
+            "cantidad_votantes": 1,
+            "id_papeletas": 1,
+        },
+    ) or {}
     mesa = None
-    if acta.get("id_mesa"):
+    if acta.get("id_mesa") or anfora.get("id_mesa"):
         mesa = await db.mesas_sufragio.find_one(
-            {"id_eleccion": id_eleccion, "id": acta["id_mesa"]},
+            {"id_eleccion": id_eleccion, "id": acta.get("id_mesa") or anfora.get("id_mesa")},
             {"_id": 0},
         )
         if mesa:
@@ -2324,6 +2336,21 @@ async def acta_publica(id_eleccion: str, id_anfora: str):
     for papeleta in proceso.get("papeletas", []):
         for franja in papeleta.get("franjas", []):
             franjas[franja["id_franja"]] = (papeleta, franja)
+    ids_papeletas = set(anfora.get("id_papeletas") or [])
+    if not ids_papeletas:
+        ids_papeletas = {
+            referencia[0]["id_papeleta"]
+            for conteo in acta.get("conteos", [])
+            if (referencia := franjas.get(conteo.get("id_franja")))
+        }
+    papeletas_publicas = [
+        {
+            "id_papeleta": papeleta["id_papeleta"],
+            "nombre": papeleta.get("nombre", ""),
+        }
+        for papeleta in proceso.get("papeletas", [])
+        if papeleta.get("id_papeleta") in ids_papeletas
+    ]
     conteos = []
     for conteo in acta.get("conteos", []):
         referencia = franjas.get(conteo.get("id_franja"))
@@ -2332,20 +2359,40 @@ async def acta_publica(id_eleccion: str, id_anfora: str):
         papeleta, franja = referencia
         votos = conteo.get("votos_por_candidato") or {}
         conteos.append({
+            "id_franja": franja.get("id_franja"),
+            "id_papeleta": papeleta.get("id_papeleta"),
             "papeleta": papeleta.get("nombre", ""),
             "franja": franja["titulo"],
+            "tipo_voto": franja.get("tipo_voto"),
+            "color_franja": franja.get("color_franja"),
+            "calcular_porcentaje_sobre": franja.get("calcular_porcentaje_sobre"),
+            "permite_blancos": franja.get("permite_blancos", True),
+            "permite_nulos": franja.get("permite_nulos", True),
             "candidatos": [
-                {"nombre": candidato["nombre"], "votos": int(votos.get(candidato["id_candidato"], 0))}
+                {
+                    "id_candidato": candidato.get("id_candidato"),
+                    "nombre": candidato["nombre"],
+                    "votos": int(votos.get(candidato["id_candidato"], 0)),
+                    "color_hex": candidato.get("color_hex"),
+                    "partido": candidato.get("partido"),
+                    "sigla": candidato.get("sigla"),
+                }
                 for candidato in franja.get("candidatos", [])
             ],
             "votos_blancos": int(conteo.get("votos_blancos") or 0),
             "votos_nulos": int(conteo.get("votos_nulos") or 0),
         })
     return {
+        "id_anfora": id_anfora,
         "numero_anfora": acta.get("numero_anfora"),
+        "nombre_anfora": anfora.get("nombre"),
+        "numero_mesa": mesa.get("numero_mesa") if mesa else None,
         "recinto": acta.get("recinto"),
         "ambiente": acta.get("ambiente"),
         "tipo_mesa": mesa.get("tipo_mesa") if mesa else None,
+        "cantidad_votantes": anfora.get("cantidad_votantes"),
+        "papeletas": papeletas_publicas,
+        "enviado_en": acta.get("enviado_en") or acta.get("actualizado_en"),
         "actualizado_en": acta.get("actualizado_en"),
         "imagen_url": acta.get("url_imagen"),
         "conteos": conteos,
