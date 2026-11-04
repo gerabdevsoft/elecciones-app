@@ -2,6 +2,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, formatearError } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Dialog,
   DialogContent,
@@ -19,14 +22,18 @@ import {
   CheckCircle2,
   ClipboardCheck,
   Clock3,
-  FileImage,
   FileText,
   Loader2,
   MapPin,
   RefreshCw,
+  RotateCcw,
+  ScanLine,
   ShieldAlert,
   ShieldCheck,
   X,
+  ZoomIn,
+  ZoomOut,
+  ImageOff,
 } from "lucide-react";
 
 const fechaCorta = (valor) => {
@@ -64,6 +71,13 @@ const horaRelativa = (valor) => {
   return fechaCorta(valor);
 };
 
+const BADGE_TIPO_VOTO = {
+  nominal: "bg-blue-50 text-blue-700",
+  lista: "bg-amber-50 text-amber-800",
+  plancha_recta: "bg-emerald-50 text-emerald-700",
+  estamentario: "bg-purple-50 text-purple-700",
+};
+
 function obtenerListaConteos(acta) {
   const conteos = acta?.conteos;
   if (Array.isArray(conteos)) return conteos;
@@ -71,14 +85,6 @@ function obtenerListaConteos(acta) {
     return Object.entries(conteos).map(([id_franja, valores]) => ({ id_franja, ...valores }));
   }
   return [];
-}
-
-function contarVotos(conteo) {
-  const candidatos = conteo?.votos_por_candidato;
-  const votosCandidatos = candidatos && typeof candidatos === "object"
-    ? Object.values(candidatos).reduce((suma, valor) => suma + (Number(valor) || 0), 0)
-    : 0;
-  return votosCandidatos + (Number(conteo?.votos_blancos) || 0) + (Number(conteo?.votos_nulos) || 0);
 }
 
 function SkeletonDetalle() {
@@ -109,25 +115,35 @@ export default function ValidacionActasPage() {
   const [modalAbierto, setModalAbierto] = useState(false);
   const [consolidando, setConsolidando] = useState(false);
   const [imagenBlob, setImagenBlob] = useState(null);
+  const [zoom, setZoom] = useState(1);
+  const [rotacion, setRotacion] = useState(0);
   const solicitudRef = useRef(0);
 
   const idEleccion = procesoActivo?.id_eleccion;
   const puedeValidar = Boolean(permisos?.puede_validar || permisos?.es_admin);
   const conteos = useMemo(() => obtenerListaConteos(acta), [acta]);
-  const franjasPorId = useMemo(() => {
-    const franjas = {};
-    (procesoActivo?.papeletas || []).forEach((papeleta) => {
-      (papeleta.franjas || []).forEach((franja) => {
-        franjas[franja.id_franja] = { ...franja, nombre_papeleta: papeleta.nombre };
-      });
-    });
-    return franjas;
-  }, [procesoActivo?.papeletas]);
-  const totalVotos = useMemo(() => conteos.reduce((suma, item) => suma + contarVotos(item), 0), [conteos]);
-  const totalCandidaturas = useMemo(() => conteos.reduce((suma, item) => {
-    const candidatos = item?.votos_por_candidato;
-    return suma + (candidatos && typeof candidatos === "object" ? Object.keys(candidatos).length : 0);
-  }, 0), [conteos]);
+  const conteosPorFranja = useMemo(
+    () => Object.fromEntries(conteos.map((conteo) => [conteo.id_franja, conteo])),
+    [conteos],
+  );
+  const papeletasActivas = useMemo(() => {
+    const ids = seleccionada?.id_papeletas || [];
+    return (procesoActivo?.papeletas || []).filter((papeleta) => ids.includes(papeleta.id_papeleta));
+  }, [procesoActivo?.papeletas, seleccionada?.id_papeletas]);
+  const tipoVotoSeleccionado = procesoActivo?.tipo === "universitaria"
+    ? { docente: "Docente", estudiante: "Estudiante" }[acta?.tipo_mesa || seleccionada?.tipo_mesa]
+    : null;
+  const cantidadVotantesHabilitados = Number.isInteger(seleccionada?.cantidad_votantes)
+    ? seleccionada.cantidad_votantes
+    : null;
+  const totalPorFranja = (franja) => {
+    const conteo = conteosPorFranja[franja.id_franja] || {};
+    const validos = Object.values(conteo.votos_por_candidato || {})
+      .reduce((suma, valor) => suma + (Number(valor) || 0), 0);
+    const blancos = Number(conteo.votos_blancos) || 0;
+    const nulos = Number(conteo.votos_nulos) || 0;
+    return { validos, total: validos + blancos + nulos };
+  };
 
   const cargarCola = useCallback(async () => {
     if (!idEleccion) {
@@ -209,6 +225,8 @@ export default function ValidacionActasPage() {
     solicitudRef.current = solicitud;
     setSeleccionada(item);
     setActa(null);
+    setZoom(1);
+    setRotacion(0);
     setErrorActa("");
     setCargandoActa(true);
     try {
@@ -246,31 +264,29 @@ export default function ValidacionActasPage() {
   return (
     <main className="min-h-[calc(100dvh-4rem)] bg-slate-100 px-3 py-5 text-slate-900 sm:px-6 sm:py-8">
       <div className="mx-auto max-w-[1440px]">
-        <section className="relative mb-6 overflow-hidden rounded-2xl bg-[#163c35] px-5 py-6 text-[#f5f4ec] shadow-[0_14px_36px_rgba(24,57,49,0.13)] sm:px-8 sm:py-8">
-          <div className="pointer-events-none absolute -right-10 -top-16 h-64 w-64 rounded-full border border-white/10" />
-          <div className="pointer-events-none absolute -right-2 -top-8 h-48 w-48 rounded-full border border-white/10" />
-          <div className="relative flex flex-col justify-between gap-6 md:flex-row md:items-end">
+        <section className="mb-6">
+          <div className="flex flex-col justify-between gap-4 lg:flex-row lg:items-end">
             <div>
-              <div className="mb-4 flex items-center gap-2 text-[11px] font-bold uppercase tracking-[0.2em] text-[#c3d5b7]">
-                <ShieldCheck className="h-4 w-4" />
+              <div className="mb-2 flex items-center gap-2 text-xs font-data uppercase tracking-widest text-blue-700">
+                <ShieldCheck className="h-4 w-4 text-blue-700" />
                 STRE / Control de actas
               </div>
-              <h1 className="font-display text-3xl font-semibold tracking-tight sm:text-[2.65rem]">Validación de actas</h1>
-              <p className="mt-2 max-w-2xl text-sm leading-6 text-[#d1ddd2] sm:text-base">
+              <h1 className="font-display text-2xl font-extrabold tracking-tight text-slate-900 sm:text-3xl">Validación de actas</h1>
+              <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-600 sm:text-base">
                 Revisa el registro recibido y consolida cada resultado con trazabilidad.
               </p>
-              <p className="mt-4 text-xs font-medium text-[#c3d5b7]">
-                Elección <span className="mx-2 text-white/35">/</span>
+              <p className="mt-4 text-xs font-medium text-slate-600">
+                Elección <span className="mx-2 text-slate-300">/</span>
                 {procesoActivo?.nombre || "sin proceso"}
               </p>
             </div>
-            <div className="flex items-center gap-3 self-start rounded-xl border border-white/15 bg-white/[0.07] px-4 py-3 md:self-auto">
-              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-[#d3a95e] text-[#183b34]">
+            <div className="flex items-center gap-3 self-start rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 lg:self-auto">
+              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-blue-700 text-white">
                 <ClipboardCheck className="h-5 w-5" />
               </div>
               <div>
-                <div className="font-data text-2xl font-semibold leading-none">{cargandoCola ? "—" : cola.length}</div>
-                <div className="mt-1 text-[10px] font-semibold uppercase tracking-[0.15em] text-[#d1ddd2]">En espera</div>
+                <div className="font-data text-2xl font-semibold leading-none text-blue-900">{cargandoCola ? "—" : cola.length}</div>
+                <div className="mt-1 text-[10px] font-semibold uppercase tracking-[0.15em] text-slate-600">En espera</div>
               </div>
             </div>
           </div>
@@ -350,6 +366,9 @@ export default function ValidacionActasPage() {
               <div className="divide-y divide-slate-200">
                 {cola.map((item, index) => {
                   const activa = seleccionada?.id === item.id;
+                  const tipoVotoItem = procesoActivo?.tipo === "universitaria"
+                    ? { docente: "Docente", estudiante: "Estudiante" }[item.tipo_mesa]
+                    : null;
                   return (
                     <button
                       type="button"
@@ -365,7 +384,7 @@ export default function ValidacionActasPage() {
                             <span className={`rounded-md px-2 py-1 font-data text-[10px] font-semibold ${index === 0 ? "bg-amber-50 text-amber-800" : "bg-slate-100 text-slate-600"}`}>
                               {index === 0 ? "MÁS ANTIGUA" : `EN COLA ${String(index + 1).padStart(2, "0")}`}
                             </span>
-                            {textoVisible(item.tipo_mesa, "") && <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">{textoVisible(item.tipo_mesa, "")}</span>}
+                            {tipoVotoItem && <span className="text-[10px] font-semibold uppercase tracking-wider text-blue-700">Tipo de voto: {tipoVotoItem}</span>}
                           </div>
                           <h3 className="truncate font-display text-[15px] font-semibold text-slate-900">
                             Mesa {item.numero_mesa ?? "—"}
@@ -443,140 +462,215 @@ export default function ValidacionActasPage() {
                     </div>
                   ) : acta ? (
                     <div className="animate-fade-up space-y-5">
-                      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-                        <div className="rounded-xl border border-blue-200 bg-blue-50 p-4 sm:col-span-4" data-testid="contexto-anfora-validacion">
-                          <p className="text-[10px] font-data uppercase tracking-widest text-blue-700">Contexto confirmado</p>
-                          <p className="mt-2 font-data text-lg font-bold text-slate-900">
-                            Ánfora {textoVisible(acta.numero_anfora ?? seleccionada.numero_anfora)}
-                          </p>
-                          <div className="mt-2 flex flex-wrap gap-2 text-xs font-data text-slate-600">
-                            <span>Mesa {textoVisible(acta.numero_mesa ?? seleccionada.numero_mesa)}</span>
-                            <span>·</span>
-                            <span>{textoVisible(acta.recinto ?? seleccionada.recinto, "Recinto no especificado")}</span>
-                            {(acta.tipo_mesa || seleccionada.tipo_mesa) ? (
-                              <>
-                                <span>·</span>
-                                <span className="stre-badge bg-blue-100 text-blue-800">
-                                  Tipo de mesa: {textoVisible(acta.tipo_mesa || seleccionada.tipo_mesa)}
-                                </span>
-                              </>
-                            ) : null}
-                          </div>
-                        </div>
-                        <div className="rounded-xl border border-slate-200 bg-slate-50 p-3.5">
-                          <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-slate-500">Tipo de mesa</p>
-                          <p className="mt-1.5 truncate text-sm font-semibold capitalize text-slate-900">{textoVisible(acta.tipo_mesa || seleccionada.tipo_mesa)}</p>
-                        </div>
-                        <div className="rounded-xl border border-slate-200 bg-slate-50 p-3.5">
-                          <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-slate-500">Conteos</p>
-                          <p className="mt-1.5 font-data text-base font-semibold text-blue-900">{conteos.length}</p>
-                        </div>
-                        <div className="rounded-xl border border-slate-200 bg-slate-50 p-3.5 sm:col-span-2">
-                          <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-slate-500">Votos registrados</p>
-                          <p className="mt-1.5 font-data text-base font-semibold text-blue-900">{totalVotos.toLocaleString("es-BO")}</p>
-                        </div>
-                      </div>
-
-                      <div className="grid gap-4 md:grid-cols-[minmax(0,0.9fr)_minmax(250px,1.1fr)]">
-                        <section className="rounded-xl border border-slate-200 bg-white p-4">
-                          <div className="mb-3 flex items-center gap-2">
-                            <MapPin className="h-4 w-4 text-blue-700" />
-                            <h3 className="font-display text-sm font-semibold text-slate-900">Ubicación registrada</h3>
-                          </div>
-                          <dl className="space-y-2.5 text-xs">
-                            <div className="flex justify-between gap-3"><dt className="text-slate-500">Mesa</dt><dd className="text-right font-medium text-slate-900">{textoVisible(acta.numero_mesa || seleccionada.numero_mesa, "No especificada")}</dd></div>
-                            <div className="flex justify-between gap-3"><dt className="text-slate-500">Recinto</dt><dd className="text-right font-medium text-slate-900">{textoVisible(acta.recinto || seleccionada.recinto, "No especificado")}</dd></div>
-                            <div className="flex justify-between gap-3"><dt className="text-slate-500">Ambiente</dt><dd className="text-right font-medium text-slate-900">{textoVisible(acta.ambiente || seleccionada.ambiente, "No especificado")}</dd></div>
-                            <div className="flex justify-between gap-3"><dt className="text-slate-500">Última actualización</dt><dd className="text-right font-medium text-slate-900">{fechaCorta(acta.actualizado_en || seleccionada.actualizado_en)}</dd></div>
-                          </dl>
-                          {acta.observacion_validacion || seleccionada.observacion_validacion ? (
-                            <div className="mt-4 border-t border-slate-200 pt-3">
-                              <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-slate-500">Observación</p>
-                              <p className="mt-1.5 text-xs leading-5 text-slate-600">{acta.observacion_validacion || seleccionada.observacion_validacion}</p>
+                      <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
+                        <section className="flex h-[720px] flex-col overflow-hidden rounded-xl border border-slate-800 bg-slate-900 shadow-inner" data-testid="panel-imagen-validacion">
+                          <div className="flex items-center justify-between border-b border-slate-800 p-3 text-white">
+                            <div className="flex items-center gap-2 text-xs font-data uppercase tracking-widest">
+                              <ScanLine className="h-4 w-4 text-blue-400" />
+                              Acta escaneada
                             </div>
-                          ) : null}
-                        </section>
-
-                        <section className="rounded-xl border border-slate-200 bg-white p-4">
-                          <div className="mb-3 flex items-center justify-between gap-2">
-                            <div className="flex items-center gap-2">
-                              <FileImage className="h-4 w-4 text-blue-700" />
-                              <h3 className="font-display text-sm font-semibold text-slate-900">Imagen del acta</h3>
+                            <div className="flex items-center gap-1">
+                              <Button type="button" size="icon" variant="ghost" aria-label="Reducir imagen" className="text-white hover:bg-white/10" onClick={() => setZoom((valor) => Math.max(0.4, valor - 0.2))}>
+                                <ZoomOut className="h-4 w-4" />
+                              </Button>
+                              <span className="w-12 text-center font-data text-xs text-white">{Math.round(zoom * 100)}%</span>
+                              <Button type="button" size="icon" variant="ghost" aria-label="Ampliar imagen" className="text-white hover:bg-white/10" onClick={() => setZoom((valor) => Math.min(3, valor + 0.2))}>
+                                <ZoomIn className="h-4 w-4" />
+                              </Button>
+                              <Button type="button" size="icon" variant="ghost" aria-label="Restablecer imagen" className="text-white hover:bg-white/10" onClick={() => { setZoom(1); setRotacion(0); }}>
+                                <RotateCcw className="h-4 w-4" />
+                              </Button>
+                              <Button type="button" size="icon" variant="ghost" aria-label="Girar imagen" className="text-white hover:bg-white/10" onClick={() => setRotacion((valor) => (valor + 90) % 360)}>
+                                ↻
+                              </Button>
                             </div>
                           </div>
-                          {tieneImagen ? (
-                            imagenBlob === "error" ? (
-                              <div className="flex min-h-36 flex-col items-center justify-center rounded-lg border border-dashed border-slate-300 bg-slate-50 px-4 text-center text-xs text-slate-600">
-                                <AlertCircle className="mb-2 h-5 w-5" />
-                                No se pudo cargar la imagen con tu sesión.
+                          <div className="acta-canvas relative flex flex-1 items-center justify-center overflow-auto p-6">
+                            {imagenBlob === "error" ? (
+                              <div className="text-center text-slate-300">
+                                <ImageOff className="mx-auto mb-4 h-16 w-16 opacity-60" />
+                                <div className="font-data text-xs uppercase tracking-widest">No se pudo cargar la imagen</div>
                               </div>
                             ) : imagenBlob ? (
-                              <a href={imagenBlob} target="_blank" rel="noreferrer" className="block overflow-hidden rounded-lg border border-slate-200 bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600" aria-label="Abrir imagen del acta en una pestaña nueva">
-                                <img src={imagenBlob} alt="Imagen del acta enviada" className="max-h-64 w-full object-contain" />
-                              </a>
-                            ) : (
-                              <div className="flex min-h-36 items-center justify-center rounded-lg bg-slate-100">
-                                <div className="h-7 w-7 animate-pulse rounded-full bg-slate-300" />
+                              <img
+                                src={imagenBlob}
+                                alt="Acta electoral"
+                                style={{ transform: `scale(${zoom}) rotate(${rotacion}deg)`, transition: "transform 200ms ease" }}
+                                className="max-w-full origin-center border border-slate-700 shadow-2xl"
+                                data-testid="acta-imagen-validacion"
+                              />
+                            ) : !tieneImagen ? (
+                              <div className="text-center text-slate-500">
+                                <ImageOff className="mx-auto mb-4 h-16 w-16 opacity-60" />
+                                <div className="font-data text-xs uppercase tracking-widest">Sin acta cargada</div>
                               </div>
-                            )
+                            ) : (
+                              <div className="h-8 w-8 animate-pulse rounded-full bg-slate-600" aria-label="Cargando imagen del acta" />
+                            )}
+                          </div>
+                        </section>
+
+                        <section className="h-[720px] overflow-y-auto rounded-xl border border-slate-200 bg-white p-6 shadow-sm" data-testid="panel-formulario-validacion">
+                          <div className="mb-6 border border-blue-200 bg-blue-50 p-4" data-testid="cabecera-anfora-validacion">
+                            <div className="text-[10px] font-data uppercase tracking-widest text-blue-700">Ánfora seleccionada</div>
+                            <div className="mt-2 text-lg font-bold text-slate-900">
+                              Ánfora {textoVisible(acta.numero_anfora ?? seleccionada.numero_anfora)}
+                            </div>
+                            <div className="text-sm text-slate-600">{textoVisible(seleccionada.nombre_anfora, "")}</div>
+                            <div className="mt-2 flex flex-wrap gap-2 text-xs font-data text-slate-600">
+                              <span>Mesa {textoVisible(acta.numero_mesa ?? seleccionada.numero_mesa)}</span>
+                              <span>·</span>
+                              <span>{textoVisible(acta.recinto ?? seleccionada.recinto, "Recinto no especificado")}</span>
+                              {tipoVotoSeleccionado ? (
+                                <>
+                                  <span>·</span>
+                                  <span className="stre-badge bg-blue-50 text-blue-700" data-testid="tipo-voto-universitario">
+                                    Tipo de voto: {tipoVotoSeleccionado}
+                                  </span>
+                                </>
+                              ) : null}
+                            </div>
+                            <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-blue-200 pt-3" data-testid="votantes-habilitados-anfora">
+                              <span className="text-xs font-semibold uppercase tracking-wide text-blue-800">Votantes habilitados en esta ánfora</span>
+                              {cantidadVotantesHabilitados == null ? (
+                                <span className="text-sm font-bold text-red-700">Cantidad sin registrar</span>
+                              ) : (
+                                <span className="font-data text-xl font-bold text-blue-900">{cantidadVotantesHabilitados}</span>
+                              )}
+                            </div>
+                            {cantidadVotantesHabilitados == null ? (
+                              <p className="mt-2 text-xs text-red-700" data-testid="votantes-habilitados-faltantes">
+                                La estructura electoral no tiene registrada la cantidad de votantes para esta ánfora.
+                              </p>
+                            ) : null}
+                          </div>
+
+                          {acta.observacion_validacion || seleccionada.observacion_validacion ? (
+                            <div className="mb-5 rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+                              <strong className="mr-1">Observación:</strong>
+                              {acta.observacion_validacion || seleccionada.observacion_validacion}
+                            </div>
+                          ) : null}
+
+                          {papeletasActivas.length ? (
+                            <Tabs key={seleccionada.id} defaultValue={papeletasActivas[0]?.id_papeleta}>
+                              <TabsList className="h-auto w-full flex-wrap" data-testid="tabs-papeletas-validacion">
+                                {papeletasActivas.map((papeleta) => (
+                                  <TabsTrigger key={papeleta.id_papeleta} value={papeleta.id_papeleta} className="text-xs">
+                                    {papeleta.nombre}
+                                  </TabsTrigger>
+                                ))}
+                              </TabsList>
+                              {papeletasActivas.map((papeleta) => (
+                                <TabsContent key={papeleta.id_papeleta} value={papeleta.id_papeleta} className="mt-4 space-y-6">
+                                  {(papeleta.franjas || []).map((franja) => {
+                                    const conteo = conteosPorFranja[franja.id_franja] || {};
+                                    const votosPorCandidato = conteo.votos_por_candidato || {};
+                                    const totalFranja = totalPorFranja(franja);
+                                    return (
+                                      <div key={franja.id_franja} className="overflow-hidden rounded-lg border border-slate-200" data-testid={`seccion-franja-validacion-${franja.id_franja}`}>
+                                        <div className="flex flex-wrap items-center justify-between gap-1 px-3 py-2" style={{ background: franja.color_franja || "#F8FAFC" }}>
+                                          <div className="text-sm font-bold text-slate-900">{textoVisible(franja.titulo, "Franja")}</div>
+                                          <div className="flex items-center gap-1">
+                                            <span className={`stre-badge ${BADGE_TIPO_VOTO[franja.tipo_voto] || "bg-slate-100 text-slate-600"}`}>
+                                              {(franja.tipo_voto || "nominal").replaceAll("_", " ")}
+                                            </span>
+                                            <span className="font-data text-[10px] text-slate-500">
+                                              {franja.calcular_porcentaje_sobre?.replaceAll("_", " ")}
+                                            </span>
+                                          </div>
+                                        </div>
+                                        <div className="space-y-2 p-3">
+                                          {(franja.candidatos || []).map((candidato, indice) => (
+                                            <div key={candidato.id_candidato} className="flex items-center gap-3 rounded-md border border-slate-100 p-2">
+                                              <div className="h-8 w-2 shrink-0 rounded-sm" style={{ background: candidato.color_hex || "#94A3B8" }} />
+                                              <div className="min-w-0 flex-1">
+                                                <div className="truncate text-sm font-medium text-slate-900">{textoVisible(candidato.nombre, `Candidato ${indice + 1}`)}</div>
+                                                {candidato.partido ? (
+                                                  <div className="font-data text-[10px] uppercase tracking-widest text-slate-500">
+                                                    {textoVisible(candidato.sigla || candidato.partido, "")}
+                                                  </div>
+                                                ) : null}
+                                              </div>
+                                              <Input
+                                                type="number"
+                                                min="0"
+                                                step="1"
+                                                value={Number(votosPorCandidato[candidato.id_candidato]) || 0}
+                                                disabled
+                                                readOnly
+                                                className="w-24 text-right font-data font-bold"
+                                                data-testid={`franja-vote-input-validacion-${candidato.id_candidato}`}
+                                              />
+                                            </div>
+                                          ))}
+                                        </div>
+                                        <div className="grid grid-cols-2 gap-3 p-3 pt-0">
+                                          {franja.permite_blancos !== false ? (
+                                            <div>
+                                              <Label className="font-data text-[10px] uppercase tracking-widest text-slate-500">Votos Blancos</Label>
+                                              <Input type="number" min="0" step="1" value={Number(conteo.votos_blancos) || 0} disabled readOnly className="font-data font-bold" />
+                                            </div>
+                                          ) : null}
+                                          {franja.permite_nulos !== false ? (
+                                            <div>
+                                              <Label className="font-data text-[10px] uppercase tracking-widest text-slate-500">Votos Nulos</Label>
+                                              <Input type="number" min="0" step="1" value={Number(conteo.votos_nulos) || 0} disabled readOnly className="font-data font-bold" />
+                                            </div>
+                                          ) : null}
+                                        </div>
+                                        <div className="mx-3 mb-3 flex items-center justify-between rounded-md border border-slate-200 bg-slate-50 p-3 font-data text-sm">
+                                          <div>
+                                            <div className="text-[10px] uppercase tracking-widest text-slate-500">Válidos franja</div>
+                                            <div className="text-lg font-bold">{totalFranja.validos}</div>
+                                          </div>
+                                          <div>
+                                            <div className="text-[10px] uppercase tracking-widest text-slate-500">Total / habilitados</div>
+                                            <div className={`text-lg font-bold ${cantidadVotantesHabilitados != null && totalFranja.total > cantidadVotantesHabilitados ? "text-red-700" : ""}`}>
+                                              {totalFranja.total} / {cantidadVotantesHabilitados ?? "—"}
+                                            </div>
+                                          </div>
+                                          <div className="text-right">
+                                            <div className="text-[10px] uppercase tracking-widest text-slate-500">Regla</div>
+                                            <div className="text-[10px]">{franja.calcular_porcentaje_sobre?.replaceAll("_", " ")}</div>
+                                          </div>
+                                        </div>
+                                        {cantidadVotantesHabilitados != null && totalFranja.total > cantidadVotantesHabilitados ? (
+                                          <div className="mx-3 mb-3 rounded-md border border-red-200 bg-red-50 p-2 text-xs font-medium text-red-800">
+                                            Los votos de esta franja superan los {cantidadVotantesHabilitados} votantes habilitados.
+                                          </div>
+                                        ) : null}
+                                      </div>
+                                    );
+                                  })}
+                                  {(!papeleta.franjas || papeleta.franjas.length === 0) ? (
+                                    <div className="py-6 text-center font-data text-sm text-slate-400">Esta boleta no tiene franjas configuradas.</div>
+                                  ) : null}
+                                </TabsContent>
+                              ))}
+                            </Tabs>
                           ) : (
-                            <div className="flex min-h-36 flex-col items-center justify-center rounded-lg border border-dashed border-slate-300 bg-slate-50 px-4 text-center text-xs text-slate-500">
-                              <FileImage className="mb-2 h-5 w-5" />
-                              No se adjuntó una imagen para esta acta.
+                            <div className="border border-dashed border-slate-200 p-4 text-sm text-slate-500">
+                              Esta ánfora no tiene papeletas asignadas para mostrar.
                             </div>
                           )}
+
+                          <div className="mt-6 flex flex-col justify-between gap-3 border-t border-slate-200 pt-4 sm:flex-row sm:items-center">
+                            <p className="max-w-md text-[11px] leading-5 text-slate-500">
+                              Al consolidar, el acta queda bloqueada y se incorpora al resultado del proceso.
+                            </p>
+                            <Button
+                              type="button"
+                              onClick={() => setModalAbierto(true)}
+                              disabled={!puedeValidar || consolidando}
+                              className="h-11 w-full bg-[#315f4b] px-5 font-semibold text-white shadow-sm transition-colors hover:bg-[#284f3d] sm:w-auto"
+                            >
+                              <CheckCircle2 className="h-4 w-4" />
+                              Consolidar y bloquear
+                            </Button>
+                          </div>
                         </section>
                       </div>
-
-                      <section className="overflow-hidden rounded-xl border border-slate-200">
-                        <div className="flex items-center justify-between gap-3 bg-slate-50 px-4 py-3">
-                          <div>
-                            <h3 className="font-display text-sm font-semibold text-slate-900">Resumen de conteos</h3>
-                            <p className="mt-0.5 text-[11px] text-slate-500">Datos recibidos para revisión</p>
-                          </div>
-                          <span className="font-data text-xs text-slate-600">{totalCandidaturas} candidaturas</span>
-                        </div>
-                        {conteos.length ? (
-                          <div className="divide-y divide-slate-200">
-                            {conteos.map((conteo, index) => {
-                              const franja = franjasPorId[conteo.id_franja];
-                              const candidatos = franja?.candidatos || Object.keys(conteo.votos_por_candidato || {}).map((id) => ({ id_candidato: id }));
-                              const tituloFranja = textoVisible(
-                                franja?.titulo || conteo.nombre_franja || conteo.franja || conteo.nombre,
-                                `Franja ${index + 1}`,
-                              );
-                              return (
-                                <div key={conteo.id_franja ?? index} className="px-4 py-3">
-                                  <div className="flex items-start justify-between gap-4">
-                                    <div className="min-w-0">
-                                      <p className="truncate text-xs font-semibold text-slate-900">{tituloFranja}</p>
-                                      {textoVisible(franja?.nombre_papeleta, "") && <p className="mt-0.5 text-[10px] text-slate-500">{textoVisible(franja.nombre_papeleta, "")}</p>}
-                                    </div>
-                                    <div className="shrink-0 text-right">
-                                      <span className="font-data text-sm font-semibold text-blue-900">{contarVotos(conteo).toLocaleString("es-BO")}</span>
-                                      <span className="ml-1 text-[10px] text-slate-500">votos</span>
-                                    </div>
-                                  </div>
-                                  <div className="mt-2 divide-y divide-slate-200 rounded-lg bg-slate-50 px-3">
-                                    {candidatos.map((candidato, candidatoIndex) => (
-                                      <div key={candidato.id_candidato} className="flex justify-between gap-3 py-2 text-[11px]">
-                                        <span className="min-w-0 truncate text-slate-600">{textoVisible(candidato.nombre, `Candidato ${candidatoIndex + 1}`)}</span>
-                                        <strong className="font-data text-blue-900">{Number(conteo.votos_por_candidato?.[candidato.id_candidato]) || 0}</strong>
-                                      </div>
-                                    ))}
-                                    <div className="flex justify-between gap-3 py-2 text-[10px] text-slate-500">
-                                      <span>Blancos · {Number(conteo.votos_blancos) || 0}</span>
-                                      <span>Nulos · {Number(conteo.votos_nulos) || 0}</span>
-                                    </div>
-                                  </div>
-                                </div>
-                              );
-                            })}
-                          </div>
-                        ) : (
-                          <p className="px-4 py-5 text-xs text-slate-500">El detalle no incluye conteos registrados.</p>
-                        )}
-                      </section>
 
                       <div className="flex flex-col justify-between gap-3 border-t border-[#e7e9e1] pt-4 sm:flex-row sm:items-center">
                         <p className="max-w-md text-[11px] leading-5 text-[#89938a]">

@@ -519,8 +519,8 @@ export default function CentroComputoPage() {
             </div>
           )}
 
-          <div className="mb-6 border border-blue-200 bg-blue-50 p-4" data-testid="contexto-anfora-confirmado">
-            <div className="text-[10px] font-data uppercase tracking-widest text-blue-700">Contexto confirmado</div>
+          <div className="mb-6 border border-blue-200 bg-blue-50 p-4" data-testid="cabecera-anfora-seleccionada">
+            <div className="text-[10px] font-data uppercase tracking-widest text-blue-700">Ánfora seleccionada</div>
             <div className="mt-2 text-lg font-bold text-slate-900">Ánfora {anforaSeleccionada.numero_anfora}</div>
             <div className="text-sm text-slate-600">{anforaSeleccionada.nombre}</div>
             <div className="mt-2 flex flex-wrap gap-2 text-xs font-data text-slate-600">
@@ -979,7 +979,7 @@ function LocalizadorAnfora({
               </div>
               <div className="mt-2 text-sm">{anfora.nombre}</div>
               <div className="mt-2 text-[10px] font-data uppercase tracking-wider text-slate-500">Mesa {mesa?.numero_mesa || "—"} · {recinto?.nombre || "—"}</div>
-              {mesa?.tipo_mesa && <div className="mt-1 text-[10px] font-data uppercase text-blue-700">Mesa {mesa.tipo_mesa}</div>}
+              {mesa?.tipo_mesa && <div className="mt-1 text-[10px] font-data uppercase text-blue-700">Tipo de voto: {({ docente: "Docente", estudiante: "Estudiante" })[mesa.tipo_mesa] || mesa.tipo_mesa}</div>}
             </button>
           );
         })}

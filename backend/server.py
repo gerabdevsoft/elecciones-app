@@ -1236,15 +1236,33 @@ async def listar_actas_pendientes_validacion(
             }
         ]
     ids_mesas = list({acta.get("id_mesa") for acta in actas if acta.get("id_mesa")})
+    ids_anforas_actas = list({acta.get("id_anfora") for acta in actas if acta.get("id_anfora")})
     mesas = await db.mesas_sufragio.find(
         {"id_eleccion": id_eleccion, "id": {"$in": ids_mesas}},
         {"_id": 0, "id": 1, "numero_mesa": 1, "tipo_mesa": 1},
     ).to_list(20000) if ids_mesas else []
     mesas_por_id = {mesa["id"]: mesa for mesa in mesas}
+    anforas = await db.anforas_mesa.find(
+        {"id_eleccion": id_eleccion, "id": {"$in": ids_anforas_actas}},
+        {
+            "_id": 0,
+            "id": 1,
+            "nombre": 1,
+            "numero_anfora": 1,
+            "cantidad_votantes": 1,
+            "id_papeletas": 1,
+        },
+    ).to_list(20000) if ids_anforas_actas else []
+    anforas_por_id = {anfora["id"]: anfora for anfora in anforas}
     for acta in actas:
         mesa = mesas_por_id.get(acta.get("id_mesa"), {})
+        anfora = anforas_por_id.get(acta.get("id_anfora"), {})
         acta["numero_mesa"] = mesa.get("numero_mesa")
         acta["tipo_mesa"] = acta.get("tipo_mesa") or mesa.get("tipo_mesa")
+        acta["nombre_anfora"] = anfora.get("nombre")
+        acta["numero_anfora"] = acta.get("numero_anfora") or anfora.get("numero_anfora")
+        acta["cantidad_votantes"] = anfora.get("cantidad_votantes")
+        acta["id_papeletas"] = anfora.get("id_papeletas") or []
         acta["enviado_en"] = acta.get("enviado_en") or acta.get("actualizado_en")
         for campo in ("id_creador", "id_operador", "id_enviado_por"):
             acta.pop(campo, None)
