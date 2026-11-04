@@ -42,6 +42,16 @@ const fechaCorta = (valor) => {
   }).format(fecha);
 };
 
+const esIdentificadorTecnico = (valor) => {
+  const texto = String(valor ?? "").trim().replace(/^#/, "");
+  return /^(?:[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}|[0-9a-f]{24})$/i.test(texto);
+};
+
+const textoVisible = (valor, alternativo = "—") => {
+  const texto = String(valor ?? "").trim();
+  return texto && !esIdentificadorTecnico(texto) ? texto : alternativo;
+};
+
 const horaRelativa = (valor) => {
   if (!valor) return "Hora de envío no disponible";
   const ms = Date.now() - new Date(valor).getTime();
@@ -74,13 +84,13 @@ function contarVotos(conteo) {
 function SkeletonDetalle() {
   return (
     <div className="space-y-5 animate-pulse" aria-label="Cargando acta">
-      <div className="h-7 w-2/5 rounded bg-[#e9ece5]" />
-      <div className="h-4 w-3/5 rounded bg-[#eef0eb]" />
+      <div className="h-7 w-2/5 rounded bg-slate-200" />
+      <div className="h-4 w-3/5 rounded bg-slate-100" />
       <div className="grid grid-cols-2 gap-3">
-        <div className="h-24 rounded-xl bg-[#eef0eb]" />
-        <div className="h-24 rounded-xl bg-[#eef0eb]" />
+        <div className="h-24 rounded-xl bg-slate-100" />
+        <div className="h-24 rounded-xl bg-slate-100" />
       </div>
-      <div className="h-56 rounded-xl bg-[#eef0eb]" />
+      <div className="h-56 rounded-xl bg-slate-100" />
     </div>
   );
 }
@@ -234,7 +244,7 @@ export default function ValidacionActasPage() {
   const tieneImagen = Boolean(acta?.url_imagen);
 
   return (
-    <main className="min-h-[calc(100dvh-4rem)] bg-[#f3f4ee] px-3 py-5 text-[#1d302c] sm:px-6 sm:py-8">
+    <main className="min-h-[calc(100dvh-4rem)] bg-slate-100 px-3 py-5 text-slate-900 sm:px-6 sm:py-8">
       <div className="mx-auto max-w-[1440px]">
         <section className="relative mb-6 overflow-hidden rounded-2xl bg-[#163c35] px-5 py-6 text-[#f5f4ec] shadow-[0_14px_36px_rgba(24,57,49,0.13)] sm:px-8 sm:py-8">
           <div className="pointer-events-none absolute -right-10 -top-16 h-64 w-64 rounded-full border border-white/10" />
@@ -250,8 +260,8 @@ export default function ValidacionActasPage() {
                 Revisa el registro recibido y consolida cada resultado con trazabilidad.
               </p>
               <p className="mt-4 text-xs font-medium text-[#c3d5b7]">
-                Elección {idEleccion || "sin proceso"} <span className="mx-2 text-white/35">/</span>
-                {procesoActivo?.nombre || "Proceso activo"}
+                Elección <span className="mx-2 text-white/35">/</span>
+                {procesoActivo?.nombre || "sin proceso"}
               </p>
             </div>
             <div className="flex items-center gap-3 self-start rounded-xl border border-white/15 bg-white/[0.07] px-4 py-3 md:self-auto">
@@ -267,13 +277,13 @@ export default function ValidacionActasPage() {
         </section>
 
         {errorPermisos ? (
-          <section className="mb-5 flex items-start gap-3 rounded-xl border border-[#e8c9a2] bg-[#fff8e9] p-4 text-sm text-[#704d26]">
+          <section className="mb-5 flex items-start gap-3 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
             <AlertCircle className="mt-0.5 h-5 w-5 shrink-0" />
             <div><strong className="block">No se pudieron verificar los permisos</strong>{errorPermisos}</div>
           </section>
         ) : null}
         {permisos && !puedeValidar && !errorPermisos ? (
-          <section className="mb-5 flex items-start gap-3 rounded-xl border border-[#e6c9a4] bg-[#fff9ed] p-4 text-sm text-[#704d26]">
+          <section className="mb-5 flex items-start gap-3 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
             <ShieldAlert className="mt-0.5 h-5 w-5 shrink-0" />
             <div>
               <strong className="block">Acceso de solo consulta</strong>
@@ -283,11 +293,11 @@ export default function ValidacionActasPage() {
         ) : null}
 
         <div className="grid items-start gap-5 lg:grid-cols-[minmax(330px,0.82fr)_minmax(0,1.55fr)]">
-          <section className="overflow-hidden rounded-2xl border border-[#dfe3d9] bg-[#fbfbf7] shadow-[0_5px_18px_rgba(33,54,46,0.045)]">
-            <header className="flex items-center justify-between border-b border-[#e6e8e0] px-4 py-4 sm:px-5">
+          <section className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+            <header className="flex items-center justify-between border-b border-slate-200 px-4 py-4 sm:px-5">
               <div>
-                <p className="text-[10px] font-bold uppercase tracking-[0.17em] text-[#708078]">Bandeja de ingreso</p>
-                <h2 className="mt-1 text-lg font-semibold tracking-tight">Pendientes</h2>
+                <p className="text-[10px] font-bold uppercase tracking-[0.17em] text-slate-500">Bandeja de ingreso</p>
+                <h2 className="mt-1 font-display text-lg font-semibold tracking-tight text-slate-900">Pendientes</h2>
               </div>
               <Button
                 type="button"
@@ -297,47 +307,47 @@ export default function ValidacionActasPage() {
                 title="Actualizar bandeja"
                 onClick={cargarCola}
                 disabled={cargandoCola || !puedeValidar}
-                className="h-9 w-9 border-[#d9dfd5] bg-[#fbfbf7] text-[#3d5d51] hover:bg-[#edf1e9]"
+                className="h-9 w-9 border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
               >
                 <RefreshCw className={`h-4 w-4 ${cargandoCola ? "animate-spin" : ""}`} />
               </Button>
             </header>
-            <div className="flex items-center gap-2 border-b border-[#e6e8e0] bg-[#f5f6f0] px-4 py-2.5 text-[11px] text-[#75827a] sm:px-5">
-              <ArrowDown className="h-3.5 w-3.5 text-[#a47839]" />
+            <div className="flex items-center gap-2 border-b border-slate-200 bg-slate-50 px-4 py-2.5 text-[11px] text-slate-600 sm:px-5">
+              <ArrowDown className="h-3.5 w-3.5 text-blue-700" />
               Orden cronológico · primero el envío más antiguo
             </div>
             {errorCola ? (
-              <div className="m-4 rounded-xl border border-[#edd2c9] bg-[#fff5f1] p-4">
-                <div className="flex gap-3 text-sm text-[#7b4436]">
+              <div className="m-4 rounded-xl border border-red-200 bg-red-50 p-4">
+                <div className="flex gap-3 text-sm text-red-800">
                   <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
                   <p>{errorCola}</p>
                 </div>
-                <Button type="button" variant="outline" size="sm" onClick={cargarCola} className="mt-3 border-[#dcb9aa] text-[#7b4436]">
+                <Button type="button" variant="outline" size="sm" onClick={cargarCola} className="mt-3 border-red-200 text-red-800">
                   <RefreshCw className="h-3.5 w-3.5" /> Reintentar
                 </Button>
               </div>
             ) : cargandoCola ? (
               <div className="space-y-3 p-4" aria-label="Cargando bandeja">
                 {[0, 1, 2].map((n) => (
-                  <div key={n} className="animate-pulse rounded-xl border border-[#e7e9e1] p-4">
-                    <div className="mb-3 h-3 w-20 rounded bg-[#e9ece5]" />
-                    <div className="mb-2 h-4 w-3/5 rounded bg-[#e9ece5]" />
-                    <div className="h-3 w-2/5 rounded bg-[#eef0eb]" />
+                  <div key={n} className="animate-pulse rounded-xl border border-slate-200 p-4">
+                    <div className="mb-3 h-3 w-20 rounded bg-slate-200" />
+                    <div className="mb-2 h-4 w-3/5 rounded bg-slate-200" />
+                    <div className="h-3 w-2/5 rounded bg-slate-100" />
                   </div>
                 ))}
               </div>
             ) : cola.length === 0 ? (
               <div className="px-6 py-12 text-center">
-                <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-[#edf1e8] text-[#4d7560]">
+                <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-xl bg-blue-50 text-blue-700">
                   <CheckCircle2 className="h-7 w-7" />
                 </div>
-                <h3 className="mt-4 text-base font-semibold">Bandeja al día</h3>
-                <p className="mx-auto mt-1 max-w-[240px] text-sm leading-5 text-[#78837b]">
+                <h3 className="mt-4 font-display text-base font-semibold text-slate-900">Bandeja al día</h3>
+                <p className="mx-auto mt-1 max-w-[240px] text-sm leading-5 text-slate-600">
                   No hay actas pendientes de validación para este proceso.
                 </p>
               </div>
             ) : (
-              <div className="divide-y divide-[#e8eae3]">
+              <div className="divide-y divide-slate-200">
                 {cola.map((item, index) => {
                   const activa = seleccionada?.id === item.id;
                   return (
@@ -346,29 +356,29 @@ export default function ValidacionActasPage() {
                       key={item.id}
                       onClick={() => seleccionarActa(item)}
                       aria-current={activa ? "true" : undefined}
-                      className={`group relative block w-full px-4 py-4 text-left transition-colors duration-150 hover:bg-[#f4f6ef] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#527a62] sm:px-5 ${activa ? "bg-[#edf2e9]" : "bg-transparent"}`}
+                      className={`group relative block w-full px-4 py-4 text-left transition-colors duration-150 hover:bg-blue-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-600 sm:px-5 ${activa ? "bg-blue-50" : "bg-transparent"}`}
                     >
-                      <span className={`absolute bottom-3 left-0 top-3 w-[3px] rounded-r ${index === 0 ? "bg-[#bd9250]" : activa ? "bg-[#47705a]" : "bg-transparent"}`} />
+                      <span className={`absolute bottom-3 left-0 top-3 w-[3px] rounded-r ${index === 0 ? "bg-amber-500" : activa ? "bg-blue-700" : "bg-transparent"}`} />
                       <div className="flex items-start justify-between gap-3">
                         <div className="min-w-0">
                           <div className="mb-2 flex flex-wrap items-center gap-2">
-                            <span className={`rounded-md px-2 py-1 font-data text-[10px] font-semibold ${index === 0 ? "bg-[#f6ecd9] text-[#88612b]" : "bg-[#edf0ea] text-[#69776e]"}`}>
+                            <span className={`rounded-md px-2 py-1 font-data text-[10px] font-semibold ${index === 0 ? "bg-amber-50 text-amber-800" : "bg-slate-100 text-slate-600"}`}>
                               {index === 0 ? "MÁS ANTIGUA" : `EN COLA ${String(index + 1).padStart(2, "0")}`}
                             </span>
-                            {item.tipo_mesa && <span className="text-[10px] font-semibold uppercase tracking-wider text-[#748078]">{item.tipo_mesa}</span>}
+                            {textoVisible(item.tipo_mesa, "") && <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">{textoVisible(item.tipo_mesa, "")}</span>}
                           </div>
-                          <h3 className="truncate text-[15px] font-semibold text-[#233a32]">
+                          <h3 className="truncate font-display text-[15px] font-semibold text-slate-900">
                             Mesa {item.numero_mesa ?? "—"}
-                            {item.numero_anfora ? <span className="font-normal text-[#758078]"> · Ánfora {item.numero_anfora}</span> : null}
+                            {item.numero_anfora ? <span className="font-normal text-slate-600"> · Ánfora {item.numero_anfora}</span> : null}
                           </h3>
-                          <p className="mt-1 flex items-center gap-1.5 truncate text-xs text-[#758078]">
-                            <MapPin className="h-3.5 w-3.5 shrink-0" />
-                            {[item.recinto, item.ambiente].filter(Boolean).join(" · ") || "Ubicación no especificada"}
+                          <p className="mt-1 flex items-center gap-1.5 truncate text-xs text-slate-600">
+                            <MapPin className="h-3.5 w-3.5 shrink-0 text-blue-700" />
+                            {[textoVisible(item.recinto, ""), textoVisible(item.ambiente, "")].filter(Boolean).join(" · ") || "Ubicación no especificada"}
                           </p>
                         </div>
-                        <ArrowRight className={`mt-1 h-4 w-4 shrink-0 transition-transform ${activa ? "translate-x-0.5 text-[#47705a]" : "text-[#aab2a8] group-hover:translate-x-0.5 group-hover:text-[#47705a]"}`} />
+                        <ArrowRight className={`mt-1 h-4 w-4 shrink-0 transition-transform ${activa ? "translate-x-0.5 text-blue-700" : "text-slate-400 group-hover:translate-x-0.5 group-hover:text-blue-700"}`} />
                       </div>
-                      <div className="mt-3 flex items-center justify-between gap-2 border-t border-[#e4e8df] pt-3 text-[11px] text-[#7b867e]">
+                      <div className="mt-3 flex items-center justify-between gap-2 border-t border-slate-200 pt-3 text-[11px] text-slate-500">
                         <span className="flex min-w-0 items-center gap-1.5 truncate">
                           <Clock3 className="h-3.5 w-3.5 shrink-0" />
                           {horaRelativa(item.enviado_en)}
@@ -381,123 +391,136 @@ export default function ValidacionActasPage() {
               </div>
             )}
             {primerEnCola && !cargandoCola && !errorCola ? (
-              <footer className="border-t border-[#e6e8e0] bg-[#f8f9f4] px-5 py-3 text-[10px] text-[#89928a]">
+              <footer className="border-t border-slate-200 bg-slate-50 px-5 py-3 text-[10px] text-slate-500">
                 La posición en la bandeja refleja el orden de envío recibido.
               </footer>
             ) : null}
           </section>
 
-          <section className="min-h-[440px] overflow-hidden rounded-2xl border border-[#dfe3d9] bg-[#fbfbf7] shadow-[0_5px_18px_rgba(33,54,46,0.045)]">
+          <section className="min-h-[440px] overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
             {!seleccionada ? (
               <div className="flex min-h-[440px] flex-col items-center justify-center px-6 py-12 text-center">
-                <div className="relative flex h-16 w-16 items-center justify-center rounded-[20px] border border-[#dce3d8] bg-[#f0f3eb] text-[#52745c]">
+                <div className="relative flex h-16 w-16 items-center justify-center rounded-xl border border-slate-200 bg-slate-50 text-blue-700">
                   <FileText className="h-7 w-7" />
-                  <span className="absolute -bottom-1 -right-1 flex h-6 w-6 items-center justify-center rounded-full border-2 border-[#fbfbf7] bg-[#d8b46d] text-[#294238]">
+                  <span className="absolute -bottom-1 -right-1 flex h-6 w-6 items-center justify-center rounded-full border-2 border-white bg-blue-700 text-white">
                     <Check className="h-3 w-3" />
                   </span>
                 </div>
-                <p className="mt-5 text-[10px] font-bold uppercase tracking-[0.18em] text-[#8a958a]">Detalle de revisión</p>
-                <h2 className="mt-2 text-xl font-semibold tracking-tight">Selecciona un acta</h2>
-                <p className="mt-2 max-w-sm text-sm leading-6 text-[#7a857d]">
+                <p className="mt-5 text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">Detalle de revisión</p>
+                <h2 className="mt-2 font-display text-xl font-semibold tracking-tight text-slate-900">Selecciona un acta</h2>
+                <p className="mt-2 max-w-sm text-sm leading-6 text-slate-600">
                   Elige un registro de la bandeja para revisar su ubicación, datos capturados y respaldo documental.
                 </p>
               </div>
             ) : (
               <>
-                <header className="flex flex-col gap-4 border-b border-[#e6e8e0] px-5 py-5 sm:flex-row sm:items-center sm:justify-between sm:px-6">
+                <header className="flex flex-col gap-4 border-b border-blue-200 bg-blue-50 px-5 py-5 sm:flex-row sm:items-center sm:justify-between sm:px-6">
                   <div>
-                    <p className="text-[10px] font-bold uppercase tracking-[0.17em] text-[#78857b]">Acta en revisión</p>
-                    <h2 className="mt-1 text-xl font-semibold tracking-tight">
+                    <p className="text-[10px] font-data font-bold uppercase tracking-[0.17em] text-blue-700">Acta en revisión</p>
+                    <h2 className="mt-1 font-display text-xl font-semibold tracking-tight text-slate-900">
                       Mesa {seleccionada.numero_mesa ?? "—"}
-                      <span className="ml-2 font-data text-sm font-medium text-[#78857b]">#{seleccionada.id}</span>
                     </h2>
-                    <p className="mt-1 text-xs text-[#7c877f]">
+                    <p className="mt-1 text-xs text-slate-600">
                       Enviada {fechaCorta(seleccionada.enviado_en)}
                     </p>
                   </div>
-                  <div className="flex items-center gap-2 self-start rounded-full border border-[#e5d8bb] bg-[#fbf4e5] px-3 py-1.5 text-[10px] font-bold uppercase tracking-[0.12em] text-[#89632f] sm:self-auto">
-                    <span className="h-1.5 w-1.5 rounded-full bg-[#bd9250]" />
+                  <div className="flex items-center gap-2 self-start rounded-full border border-amber-200 bg-amber-50 px-3 py-1.5 text-[10px] font-bold uppercase tracking-[0.12em] text-amber-800 sm:self-auto">
+                    <span className="h-1.5 w-1.5 rounded-full bg-amber-500" />
                     Pendiente de validación
                   </div>
                 </header>
 
                 <div className="p-4 sm:p-6">
                   {cargandoActa ? <SkeletonDetalle /> : errorActa ? (
-                    <div className="rounded-xl border border-[#edd2c9] bg-[#fff5f1] p-5">
-                      <div className="flex gap-3 text-sm text-[#7b4436]">
+                    <div className="rounded-xl border border-red-200 bg-red-50 p-5">
+                      <div className="flex gap-3 text-sm text-red-800">
                         <AlertCircle className="mt-0.5 h-5 w-5 shrink-0" />
                         <div><strong className="block">No se pudo cargar el acta</strong>{errorActa}</div>
                       </div>
-                      <Button type="button" variant="outline" onClick={() => seleccionarActa(seleccionada)} className="mt-4 border-[#dcb9aa] text-[#7b4436]">
+                      <Button type="button" variant="outline" onClick={() => seleccionarActa(seleccionada)} className="mt-4 border-red-200 text-red-800">
                         <RefreshCw className="h-4 w-4" /> Reintentar
                       </Button>
                     </div>
                   ) : acta ? (
                     <div className="animate-fade-up space-y-5">
                       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-                        <div className="rounded-xl border border-[#e4e8df] bg-[#f7f8f3] p-3.5">
-                          <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-[#89938a]">Ánfora</p>
-                            <p className="mt-1.5 font-data text-base font-semibold text-[#30463b]">{acta.numero_anfora ?? seleccionada.numero_anfora ?? "—"}</p>
+                        <div className="rounded-xl border border-blue-200 bg-blue-50 p-4 sm:col-span-4" data-testid="contexto-anfora-validacion">
+                          <p className="text-[10px] font-data uppercase tracking-widest text-blue-700">Contexto confirmado</p>
+                          <p className="mt-2 font-data text-lg font-bold text-slate-900">
+                            Ánfora {textoVisible(acta.numero_anfora ?? seleccionada.numero_anfora)}
+                          </p>
+                          <div className="mt-2 flex flex-wrap gap-2 text-xs font-data text-slate-600">
+                            <span>Mesa {textoVisible(acta.numero_mesa ?? seleccionada.numero_mesa)}</span>
+                            <span>·</span>
+                            <span>{textoVisible(acta.recinto ?? seleccionada.recinto, "Recinto no especificado")}</span>
+                            {(acta.tipo_mesa || seleccionada.tipo_mesa) ? (
+                              <>
+                                <span>·</span>
+                                <span className="stre-badge bg-blue-100 text-blue-800">
+                                  Tipo de mesa: {textoVisible(acta.tipo_mesa || seleccionada.tipo_mesa)}
+                                </span>
+                              </>
+                            ) : null}
+                          </div>
                         </div>
-                        <div className="rounded-xl border border-[#e4e8df] bg-[#f7f8f3] p-3.5">
-                          <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-[#89938a]">Tipo de mesa</p>
-                          <p className="mt-1.5 truncate text-sm font-semibold capitalize text-[#30463b]">{acta.tipo_mesa || seleccionada.tipo_mesa || "—"}</p>
+                        <div className="rounded-xl border border-slate-200 bg-slate-50 p-3.5">
+                          <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-slate-500">Tipo de mesa</p>
+                          <p className="mt-1.5 truncate text-sm font-semibold capitalize text-slate-900">{textoVisible(acta.tipo_mesa || seleccionada.tipo_mesa)}</p>
                         </div>
-                        <div className="rounded-xl border border-[#e4e8df] bg-[#f7f8f3] p-3.5">
-                          <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-[#89938a]">Conteos</p>
-                          <p className="mt-1.5 font-data text-base font-semibold text-[#30463b]">{conteos.length}</p>
+                        <div className="rounded-xl border border-slate-200 bg-slate-50 p-3.5">
+                          <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-slate-500">Conteos</p>
+                          <p className="mt-1.5 font-data text-base font-semibold text-blue-900">{conteos.length}</p>
                         </div>
-                        <div className="rounded-xl border border-[#e4e8df] bg-[#f7f8f3] p-3.5">
-                          <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-[#89938a]">Votos registrados</p>
-                          <p className="mt-1.5 font-data text-base font-semibold text-[#30463b]">{totalVotos.toLocaleString("es-BO")}</p>
+                        <div className="rounded-xl border border-slate-200 bg-slate-50 p-3.5 sm:col-span-2">
+                          <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-slate-500">Votos registrados</p>
+                          <p className="mt-1.5 font-data text-base font-semibold text-blue-900">{totalVotos.toLocaleString("es-BO")}</p>
                         </div>
                       </div>
 
                       <div className="grid gap-4 md:grid-cols-[minmax(0,0.9fr)_minmax(250px,1.1fr)]">
-                        <section className="rounded-xl border border-[#e4e8df] bg-[#f8f9f5] p-4">
+                        <section className="rounded-xl border border-slate-200 bg-white p-4">
                           <div className="mb-3 flex items-center gap-2">
-                            <MapPin className="h-4 w-4 text-[#65806c]" />
-                            <h3 className="text-sm font-semibold">Ubicación registrada</h3>
+                            <MapPin className="h-4 w-4 text-blue-700" />
+                            <h3 className="font-display text-sm font-semibold text-slate-900">Ubicación registrada</h3>
                           </div>
                           <dl className="space-y-2.5 text-xs">
-                             <div className="flex justify-between gap-3"><dt className="text-[#879188]">Mesa</dt><dd className="text-right font-medium text-[#364a3f]">{acta.numero_mesa || seleccionada.numero_mesa || "No especificada"}</dd></div>
-                             <div className="flex justify-between gap-3"><dt className="text-[#879188]">Recinto</dt><dd className="text-right font-medium text-[#364a3f]">{acta.recinto || seleccionada.recinto || "No especificado"}</dd></div>
-                            <div className="flex justify-between gap-3"><dt className="text-[#879188]">Ambiente</dt><dd className="text-right font-medium text-[#364a3f]">{acta.ambiente || seleccionada.ambiente || "No especificado"}</dd></div>
-                            <div className="flex justify-between gap-3"><dt className="text-[#879188]">Última actualización</dt><dd className="text-right font-medium text-[#364a3f]">{fechaCorta(acta.actualizado_en || seleccionada.actualizado_en)}</dd></div>
+                            <div className="flex justify-between gap-3"><dt className="text-slate-500">Mesa</dt><dd className="text-right font-medium text-slate-900">{textoVisible(acta.numero_mesa || seleccionada.numero_mesa, "No especificada")}</dd></div>
+                            <div className="flex justify-between gap-3"><dt className="text-slate-500">Recinto</dt><dd className="text-right font-medium text-slate-900">{textoVisible(acta.recinto || seleccionada.recinto, "No especificado")}</dd></div>
+                            <div className="flex justify-between gap-3"><dt className="text-slate-500">Ambiente</dt><dd className="text-right font-medium text-slate-900">{textoVisible(acta.ambiente || seleccionada.ambiente, "No especificado")}</dd></div>
+                            <div className="flex justify-between gap-3"><dt className="text-slate-500">Última actualización</dt><dd className="text-right font-medium text-slate-900">{fechaCorta(acta.actualizado_en || seleccionada.actualizado_en)}</dd></div>
                           </dl>
                           {acta.observacion_validacion || seleccionada.observacion_validacion ? (
-                            <div className="mt-4 border-t border-[#e4e8df] pt-3">
-                              <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-[#89938a]">Observación</p>
-                              <p className="mt-1.5 text-xs leading-5 text-[#53645a]">{acta.observacion_validacion || seleccionada.observacion_validacion}</p>
+                            <div className="mt-4 border-t border-slate-200 pt-3">
+                              <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-slate-500">Observación</p>
+                              <p className="mt-1.5 text-xs leading-5 text-slate-600">{acta.observacion_validacion || seleccionada.observacion_validacion}</p>
                             </div>
                           ) : null}
                         </section>
 
-                        <section className="rounded-xl border border-[#e4e8df] bg-[#f8f9f5] p-4">
+                        <section className="rounded-xl border border-slate-200 bg-white p-4">
                           <div className="mb-3 flex items-center justify-between gap-2">
                             <div className="flex items-center gap-2">
-                              <FileImage className="h-4 w-4 text-[#65806c]" />
-                              <h3 className="text-sm font-semibold">Imagen del acta</h3>
+                              <FileImage className="h-4 w-4 text-blue-700" />
+                              <h3 className="font-display text-sm font-semibold text-slate-900">Imagen del acta</h3>
                             </div>
-                            {acta.ruta_storage ? <span className="max-w-[45%] truncate font-data text-[9px] text-[#96a097]" title={acta.ruta_storage}>{acta.ruta_storage}</span> : null}
                           </div>
                           {tieneImagen ? (
                             imagenBlob === "error" ? (
-                              <div className="flex min-h-36 flex-col items-center justify-center rounded-lg border border-dashed border-[#d7ddd3] bg-[#f2f4ee] px-4 text-center text-xs text-[#7c877e]">
+                              <div className="flex min-h-36 flex-col items-center justify-center rounded-lg border border-dashed border-slate-300 bg-slate-50 px-4 text-center text-xs text-slate-600">
                                 <AlertCircle className="mb-2 h-5 w-5" />
                                 No se pudo cargar la imagen con tu sesión.
                               </div>
                             ) : imagenBlob ? (
-                              <a href={imagenBlob} target="_blank" rel="noreferrer" className="block overflow-hidden rounded-lg border border-[#dfe4dc] bg-[#e8e9e2] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#527a62]" aria-label="Abrir imagen del acta en una pestaña nueva">
+                              <a href={imagenBlob} target="_blank" rel="noreferrer" className="block overflow-hidden rounded-lg border border-slate-200 bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600" aria-label="Abrir imagen del acta en una pestaña nueva">
                                 <img src={imagenBlob} alt="Imagen del acta enviada" className="max-h-64 w-full object-contain" />
                               </a>
                             ) : (
-                              <div className="flex min-h-36 items-center justify-center rounded-lg bg-[#eef0eb]">
-                                <div className="h-7 w-7 animate-pulse rounded-full bg-[#dbe1d7]" />
+                              <div className="flex min-h-36 items-center justify-center rounded-lg bg-slate-100">
+                                <div className="h-7 w-7 animate-pulse rounded-full bg-slate-300" />
                               </div>
                             )
                           ) : (
-                            <div className="flex min-h-36 flex-col items-center justify-center rounded-lg border border-dashed border-[#d7ddd3] bg-[#f2f4ee] px-4 text-center text-xs text-[#89938a]">
+                            <div className="flex min-h-36 flex-col items-center justify-center rounded-lg border border-dashed border-slate-300 bg-slate-50 px-4 text-center text-xs text-slate-500">
                               <FileImage className="mb-2 h-5 w-5" />
                               No se adjuntó una imagen para esta acta.
                             </div>
@@ -505,41 +528,43 @@ export default function ValidacionActasPage() {
                         </section>
                       </div>
 
-                      <section className="overflow-hidden rounded-xl border border-[#e4e8df]">
-                        <div className="flex items-center justify-between gap-3 bg-[#f0f3ec] px-4 py-3">
+                      <section className="overflow-hidden rounded-xl border border-slate-200">
+                        <div className="flex items-center justify-between gap-3 bg-slate-50 px-4 py-3">
                           <div>
-                            <h3 className="text-sm font-semibold">Resumen de conteos</h3>
-                            <p className="mt-0.5 text-[11px] text-[#7d897f]">Datos recibidos para revisión</p>
+                            <h3 className="font-display text-sm font-semibold text-slate-900">Resumen de conteos</h3>
+                            <p className="mt-0.5 text-[11px] text-slate-500">Datos recibidos para revisión</p>
                           </div>
-                          <span className="font-data text-xs text-[#748076]">{totalCandidaturas} candidaturas</span>
+                          <span className="font-data text-xs text-slate-600">{totalCandidaturas} candidaturas</span>
                         </div>
                         {conteos.length ? (
-                          <div className="divide-y divide-[#e9ebe5]">
+                          <div className="divide-y divide-slate-200">
                             {conteos.map((conteo, index) => {
                               const franja = franjasPorId[conteo.id_franja];
-                              const candidatos = franja?.candidatos || Object.keys(conteo.votos_por_candidato || {}).map((id) => ({ id_candidato: id, nombre: id }));
+                              const candidatos = franja?.candidatos || Object.keys(conteo.votos_por_candidato || {}).map((id) => ({ id_candidato: id }));
+                              const tituloFranja = textoVisible(
+                                franja?.titulo || conteo.nombre_franja || conteo.franja || conteo.nombre,
+                                `Franja ${index + 1}`,
+                              );
                               return (
                                 <div key={conteo.id_franja ?? index} className="px-4 py-3">
                                   <div className="flex items-start justify-between gap-4">
                                     <div className="min-w-0">
-                                      <p className="truncate text-xs font-semibold text-[#3b5044]">
-                                        {franja?.titulo || conteo.nombre_franja || conteo.franja || conteo.nombre || `Franja ${index + 1}`}
-                                      </p>
-                                      {franja?.nombre_papeleta && <p className="mt-0.5 text-[10px] text-[#879188]">{franja.nombre_papeleta}</p>}
+                                      <p className="truncate text-xs font-semibold text-slate-900">{tituloFranja}</p>
+                                      {textoVisible(franja?.nombre_papeleta, "") && <p className="mt-0.5 text-[10px] text-slate-500">{textoVisible(franja.nombre_papeleta, "")}</p>}
                                     </div>
                                     <div className="shrink-0 text-right">
-                                      <span className="font-data text-sm font-semibold text-[#30463b]">{contarVotos(conteo).toLocaleString("es-BO")}</span>
-                                      <span className="ml-1 text-[10px] text-[#89938a]">votos</span>
+                                      <span className="font-data text-sm font-semibold text-blue-900">{contarVotos(conteo).toLocaleString("es-BO")}</span>
+                                      <span className="ml-1 text-[10px] text-slate-500">votos</span>
                                     </div>
                                   </div>
-                                  <div className="mt-2 divide-y divide-[#eff0eb] rounded-lg bg-[#f8f9f5] px-3">
-                                    {candidatos.map((candidato) => (
+                                  <div className="mt-2 divide-y divide-slate-200 rounded-lg bg-slate-50 px-3">
+                                    {candidatos.map((candidato, candidatoIndex) => (
                                       <div key={candidato.id_candidato} className="flex justify-between gap-3 py-2 text-[11px]">
-                                        <span className="min-w-0 truncate text-[#69776e]">{candidato.nombre || candidato.id_candidato}</span>
-                                        <strong className="font-data text-[#30463b]">{Number(conteo.votos_por_candidato?.[candidato.id_candidato]) || 0}</strong>
+                                        <span className="min-w-0 truncate text-slate-600">{textoVisible(candidato.nombre, `Candidato ${candidatoIndex + 1}`)}</span>
+                                        <strong className="font-data text-blue-900">{Number(conteo.votos_por_candidato?.[candidato.id_candidato]) || 0}</strong>
                                       </div>
                                     ))}
-                                    <div className="flex justify-between gap-3 py-2 text-[10px] text-[#879188]">
+                                    <div className="flex justify-between gap-3 py-2 text-[10px] text-slate-500">
                                       <span>Blancos · {Number(conteo.votos_blancos) || 0}</span>
                                       <span>Nulos · {Number(conteo.votos_nulos) || 0}</span>
                                     </div>
@@ -549,7 +574,7 @@ export default function ValidacionActasPage() {
                             })}
                           </div>
                         ) : (
-                          <p className="px-4 py-5 text-xs text-[#879188]">El detalle no incluye conteos registrados.</p>
+                          <p className="px-4 py-5 text-xs text-slate-500">El detalle no incluye conteos registrados.</p>
                         )}
                       </section>
 
