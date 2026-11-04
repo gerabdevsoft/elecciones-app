@@ -1888,9 +1888,17 @@ async def bitacora_global(admin: dict = Depends(requerir_admin)):
     salida.sort(key=lambda x: x.get("timestamp", ""), reverse=True)
     return salida
 
-# ------------- OCR con Document AI -------------
+# ------------- Carga de imágenes y OCR deshabilitado -------------
 @api.post("/procesar-ocr")
-async def procesar_ocr(
+async def procesar_ocr(usuario: dict = Depends(usuario_actual)):
+    raise HTTPException(
+        503,
+        "El reconocimiento OCR está deshabilitado. Cargue la imagen y registre los votos manualmente.",
+    )
+
+
+@api.post("/subir-imagen-acta")
+async def subir_imagen_acta(
     id_eleccion: str = Form(...),
     id_anfora: str = Form(...),
     id_papeleta: Optional[str] = Form(None),
@@ -1921,49 +1929,10 @@ async def procesar_ocr(
 
     url_publica = f"/api/imagenes/{ruta_final}"
 
-    # El OCR procesa la copia persistida en el bucket con Document AI.
-    ocr_data = {}
-    try:
-        # Estructura esperada: candidatos por franja, blancos y nulos.
-        franjas = []
-        for p in proc.get("papeletas", []):
-            if id_papeleta and p["id_papeleta"] != id_papeleta:
-                continue
-            for f in p.get("franjas", []):
-                franjas.append({**f, "nombre_papeleta": p.get("nombre", "")})
-
-        contenido_guardado, mime_guardado = obtener_objeto(ruta_final)
-        documento = await asyncio.to_thread(
-            _procesar_document_ai,
-            contenido_guardado,
-            mime_guardado,
-        )
-        conteos_detectados, campos_detectados = _extraer_conteos_document_ai(documento, franjas)
-        cantidad_asignada = sum(
-            len(conteo["votos_por_candidato"])
-            + int(conteo["votos_blancos"] is not None)
-            + int(conteo["votos_nulos"] is not None)
-            for conteo in conteos_detectados
-        )
-        ocr_data = {
-            "conteos": conteos_detectados,
-            "conteos_detectados": cantidad_asignada,
-            "campos_detectados": campos_detectados[:100],
-            "texto_detectado": documento.get("text", "")[:12000],
-        }
-        if cantidad_asignada == 0:
-            ocr_data["aviso"] = (
-                "Document AI reconoció el acta, pero no pudo relacionar automáticamente "
-                "los campos con los candidatos. Revise el texto detectado y complete los votos."
-            )
-    except Exception as e:
-        logger.error("Error OCR Document AI: %s", type(e).__name__)
-        ocr_data = {"error": str(e), "conteos": []}
-
+    # La carga solo almacena la fotografía; no extrae datos ni invoca Document AI.
     return {
         "url_imagen": url_publica,
         "ruta_storage": ruta_final,
-        "ocr": ocr_data,
     }
 
 @api.get("/imagenes/{path:path}")

@@ -67,7 +67,6 @@ export default function CentroComputoPage() {
   const [rotacion, setRotacion] = useState(0);
   const [subiendo, setSubiendo] = useState(false);
   const [cargandoActa, setCargandoActa] = useState(false);
-  const [ocrResumen, setOcrResumen] = useState(null);
   const [modalObservacion, setModalObservacion] = useState(false);
   const [observacion, setObservacion] = useState("");
   const [observando, setObservando] = useState(false);
@@ -179,7 +178,6 @@ export default function CentroComputoPage() {
     setUrlImagen(null); setRutaStorage(null);
     setMeta({ departamento: "", ciudad: "", recinto: "", ambiente: "", numero_anfora: anfora.numero_anfora });
     setConteos(conteosIniciales(procesoActivo, (procesoActivo.papeletas || []).filter((papeleta) => anfora.id_papeletas?.includes(papeleta.id_papeleta))));
-    setOcrResumen(null);
     setZoom(1); setRotacion(0);
     try {
       const { data } = await api.get(
@@ -216,7 +214,6 @@ export default function CentroComputoPage() {
     setUrlImagen(null);
     setRutaStorage(null);
     setConteos({});
-    setOcrResumen(null);
     setMeta({ departamento: "", ciudad: "", recinto: "", ambiente: "", numero_anfora: "" });
     setZoom(1);
     setRotacion(0);
@@ -262,32 +259,12 @@ export default function CentroComputoPage() {
       fd.append("id_eleccion", procesoActivo.id_eleccion);
       fd.append("id_anfora", anforaSeleccionada.id);
       fd.append("archivo", comprimida);
-      const { data } = await api.post("/procesar-ocr", fd, { headers: { "Content-Type": "multipart/form-data" } });
+      const { data } = await api.post("/subir-imagen-acta", fd, { headers: { "Content-Type": "multipart/form-data" } });
       setUrlImagen(data.url_imagen);
       setRutaStorage(data.ruta_storage);
-      if (data.ocr?.conteos) {
-        const nuevo = { ...conteos };
-        data.ocr.conteos.forEach((oc) => {
-          if (nuevo[oc.id_franja]) {
-            Object.entries(oc.votos_por_candidato || {}).forEach(([idc, v]) => {
-              if (v != null && !isNaN(v)) nuevo[oc.id_franja].votos_por_candidato[idc] = Number(v);
-            });
-            if (oc.votos_blancos != null) nuevo[oc.id_franja].votos_blancos = Number(oc.votos_blancos);
-            if (oc.votos_nulos != null) nuevo[oc.id_franja].votos_nulos = Number(oc.votos_nulos);
-          }
-        });
-        setConteos(nuevo);
-      }
-      setOcrResumen(data.ocr);
-      if (data.ocr?.error) {
-        toast.warning("La imagen se guardó, pero falló el reconocimiento OCR.");
-      } else if (data.ocr?.conteos_detectados === 0) {
-        toast.warning("OCR completado. Revise el texto detectado y complete los votos.");
-      } else {
-        toast.success("OCR completado. Revise los valores antes de consolidar.");
-      }
+      toast.success("Imagen guardada. Registre los votos manualmente.");
     } catch (e) {
-      toast.error(formatearError(e?.response?.data?.detail) || "Fallo al procesar OCR");
+      toast.error(formatearError(e?.response?.data?.detail) || "No se pudo subir la imagen");
     } finally { setSubiendo(false); }
   };
 
@@ -487,7 +464,7 @@ export default function CentroComputoPage() {
                 <ImageOff className="w-16 h-16 mx-auto mb-4 opacity-60" />
                 <div className="font-data text-xs uppercase tracking-widest">Sin acta cargada</div>
                 <Button className="mt-6 bg-[#7C3AED] hover:bg-[#6D28D9]" onClick={() => inputFile.current?.click()} disabled={subiendo || !puedeEditar} data-testid="subir-acta-btn">
-                  <Upload className="w-4 h-4 mr-2" /> {subiendo ? "Procesando…" : "Subir foto del acta"}
+                  <Upload className="w-4 h-4 mr-2" /> {subiendo ? "Subiendo…" : "Subir foto del acta"}
                 </Button>
                 <div className="text-[10px] font-data mt-3 text-slate-600">La imagen se comprime en el navegador antes de enviarse al servidor.</div>
               </div>
@@ -497,9 +474,15 @@ export default function CentroComputoPage() {
           {urlImagen && (
             <div className="p-3 border-t border-slate-800 flex items-center justify-between text-xs text-slate-400 font-data">
               <span className="flex items-center gap-2"><Sparkles className="w-3.5 h-3.5 text-[#7C3AED]" /> Cliente-side compression aplicada</span>
-              <button className="text-[#7C3AED] hover:text-[#A78BFA]" onClick={() => inputFile.current?.click()} data-testid="ocr-preview-button">Reemplazar / OCR de nuevo</button>
+              <button className="text-[#7C3AED] hover:text-[#A78BFA]" onClick={() => inputFile.current?.click()} disabled={subiendo || !puedeEditar} data-testid="reemplazar-imagen-button">Reemplazar imagen</button>
             </div>
           )}
+          <div className="flex flex-wrap items-center gap-3 border-t border-slate-800 p-3">
+            <Button variant="outline" size="sm" disabled data-testid="ocr-deshabilitado">
+              <ScanLine className="mr-2 h-4 w-4" /> OCR deshabilitado
+            </Button>
+            <span className="text-xs text-slate-400">Solo se guarda la imagen. Ingrese los votos manualmente.</span>
+          </div>
         </div>
 
         {/* Columna derecha: formulario */}
@@ -642,40 +625,6 @@ export default function CentroComputoPage() {
               </TabsContent>
             ))}
           </Tabs>
-
-          {ocrResumen?.error && (
-            <div className="mt-4 p-3 bg-amber-50 border border-amber-200 text-amber-800 text-xs rounded-md flex gap-2">
-              <AlertTriangle className="w-4 h-4 shrink-0" /> OCR devolvió: {ocrResumen.error}
-            </div>
-          )}
-          {ocrResumen?.aviso && (
-            <div className="mt-4 p-3 bg-amber-50 border border-amber-200 text-amber-800 text-xs rounded-md flex gap-2" data-testid="ocr-aviso">
-              <AlertTriangle className="w-4 h-4 shrink-0" /> {ocrResumen.aviso}
-            </div>
-          )}
-          {!!ocrResumen?.campos_detectados?.length && (
-            <details className="mt-4 rounded-md border border-slate-200 bg-white p-3 text-xs" data-testid="ocr-campos-detectados">
-              <summary className="cursor-pointer font-semibold text-slate-700">
-                Campos detectados por Document AI ({ocrResumen.campos_detectados.length})
-              </summary>
-              <ul className="mt-3 space-y-2">
-                {ocrResumen.campos_detectados.map((campo, indice) => (
-                  <li key={`${campo.nombre}-${indice}`} className="grid grid-cols-1 gap-1 border-t border-slate-100 pt-2 sm:grid-cols-2">
-                    <span className="font-medium text-slate-600">{campo.nombre || "Campo"}</span>
-                    <span className="font-data text-slate-800">{campo.valor || "Sin valor"}</span>
-                  </li>
-                ))}
-              </ul>
-            </details>
-          )}
-          {!!ocrResumen?.texto_detectado && (
-            <details className="mt-2 rounded-md border border-slate-200 bg-white p-3 text-xs" data-testid="ocr-texto-detectado">
-              <summary className="cursor-pointer font-semibold text-slate-700">Ver texto reconocido por Document AI</summary>
-              <pre className="mt-3 max-h-64 overflow-auto whitespace-pre-wrap break-words font-data text-slate-600">
-                {ocrResumen.texto_detectado}
-              </pre>
-            </details>
-          )}
 
           {bloquearGuardadoPorVotantes && cantidadVotantesHabilitados != null && (
             <div className="mt-4 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-800" data-testid="error-limite-votantes">
