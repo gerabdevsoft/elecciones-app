@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { api } from "@/lib/api";
-import { ordenarAnforasNumericamente } from "@/lib/sorting";
+import { ordenarAnforasNumericamente, ordenarCandidatosPorNumeroLista } from "@/lib/sorting";
 import {
   construirFiltrosEstructura,
   filtrarAnforasPorEstructura,
@@ -440,7 +440,7 @@ function DetalleActaPublica({ acta, error, cargando }) {
                               </div>
                             </div>
                             <div className="space-y-2 p-3">
-                              {(franja.candidatos || []).map((candidato, indice) => (
+                              {ordenarCandidatosPorNumeroLista(franja.candidatos).map((candidato, indice) => (
                                 <div key={candidato.id_candidato || `${franja.id_franja}-${indice}`} className="flex items-center gap-3 rounded-md border border-slate-100 p-2">
                                   <div className="h-8 w-2 shrink-0 rounded-sm" style={{ background: candidato.color_hex || "#94A3B8" }} />
                                   <div className="min-w-0 flex-1">

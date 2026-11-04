@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Navigate } from "react-router-dom";
 import { api } from "@/lib/api";
+import { ordenarCandidatosPorNumeroLista } from "@/lib/sorting";
 import { useAuth } from "@/context/AuthContext";
 import { BadgeCheck, Radio, RefreshCw, Trophy } from "lucide-react";
 
@@ -17,9 +18,8 @@ function PanelEstamento({ nombre, resultado }) {
   if (!resultado) {
     return <div className="border border-slate-200 p-4 text-sm text-slate-400">Sin franjas registradas.</div>;
   }
-  const candidatos = Object.entries(resultado.candidatos || {})
-    .map(([id, candidato]) => ({ id, ...candidato }))
-    .sort((a, b) => b.votos - a.votos);
+  const candidatos = ordenarCandidatosPorNumeroLista(Object.entries(resultado.candidatos || {})
+    .map(([id, candidato]) => ({ id, ...candidato })));
   const superaUmbral = candidatos.find((candidato) => (
     (resultado.ganadores_primera_vuelta || []).includes(candidato.id)
   ));
@@ -151,7 +151,7 @@ export default function ResultadosPage() {
             ))
           ) : (
             Object.entries(consolidado.resultados || {}).map(([idFranja, resultado]) => {
-              const candidatos = Object.values(resultado.candidatos || {}).sort((a, b) => b.votos - a.votos);
+              const candidatos = ordenarCandidatosPorNumeroLista(Object.values(resultado.candidatos || {}));
               return (
                 <article key={idFranja} className="border border-slate-200 bg-white p-5" data-testid={`resultado-general-${idFranja}`}>
                   <div className="flex items-start justify-between gap-4">

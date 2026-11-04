@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { AlertCircle, CheckCircle2, Clock3, MapPin, Radio, RefreshCw, Trophy } from "lucide-react";
 import { Bar, BarChart, Cell, Line, LineChart, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { api, formatearError } from "@/lib/api";
+import { ordenarCandidatosPorNumeroLista } from "@/lib/sorting";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { CabeceraPublica } from "@/pages/TrepPublicoPage";
@@ -15,6 +16,7 @@ export default function ResultadosPublicosPage() {
   const [tipoGrafica, setTipoGrafica] = useState("barras");
   const [conexion, setConexion] = useState("actualizando");
   const [errorCarga, setErrorCarga] = useState("");
+  const actualizarRef = useRef(null);
 
   const cargarProcesos = useCallback(async () => {
     try {
@@ -26,14 +28,21 @@ export default function ResultadosPublicosPage() {
       setErrorCarga(formatearError(error?.response?.data?.detail) || "No se pudieron cargar los procesos electorales.");
     }
   }, []);
-  const cargar = useCallback(async () => {
+  const cargar = useCallback(async (signal) => {
+    // Los botones de reintento entregan un evento, no una señal de cancelación.
+    if (!signal || typeof signal.addEventListener !== "function") {
+      if (actualizarRef.current) return actualizarRef.current();
+      signal = undefined;
+    }
     if (!idEleccion) return false;
     try {
-      const { data } = await api.get(`/publico/procesos/${idEleccion}/resultados`);
+      const { data } = await api.get(`/publico/procesos/${idEleccion}/resultados`, { signal, timeout: 30000 });
+      if (signal?.aborted) return false;
       setDatos(data);
       setErrorCarga("");
       return true;
     } catch (error) {
+      if (signal?.aborted || error?.code === "ERR_CANCELED") return false;
       setErrorCarga(formatearError(error?.response?.data?.detail) || "No se pudieron actualizar los resultados.");
       return false;
     }
@@ -45,17 +54,100 @@ export default function ResultadosPublicosPage() {
   useEffect(() => {
     if (!idEleccion) return undefined;
     let activa = true;
+    let solicitudPendiente = false;
+    let actualizacionEnCola = false;
+    let eventos = null;
+    let controladorSolicitud = null;
+
     setDatos(null);
+    setConexion("actualizando");
+
     const actualizar = async () => {
-      setConexion("actualizando");
-      const actualizado = await cargar();
-      if (activa) setConexion(actualizado ? "actualizado" : "reintentando");
+      if (!activa || document.visibilityState === "hidden") return;
+      if (solicitudPendiente) {
+        actualizacionEnCola = true;
+        return;
+      }
+      solicitudPendiente = true;
+      controladorSolicitud = new AbortController();
+      if (eventos?.readyState !== 1) setConexion("actualizando");
+      const actualizado = await cargar(controladorSolicitud.signal);
+      solicitudPendiente = false;
+      controladorSolicitud = null;
+      if (!activa || document.visibilityState === "hidden") return;
+      const hora = new Date().toLocaleTimeString("es-BO", {
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+      });
+      if (actualizado) {
+        setConexion(`${eventos?.readyState === 1 ? "en vivo" : "respaldo"} · actualizado ${hora}`);
+      } else {
+        setConexion(
+          eventos?.readyState === 1
+            ? "en vivo · actualización pendiente"
+            : "reconectando; respaldo automático activo",
+        );
+      }
+      if (actualizacionEnCola) {
+        actualizacionEnCola = false;
+        actualizar();
+      }
     };
+
+    const conectar = () => {
+      if (!activa || document.visibilityState === "hidden" || typeof window.EventSource !== "function") return;
+      if (eventos) return;
+      const base = process.env.REACT_APP_BACKEND_URL || "";
+      try {
+        eventos = new EventSource(`${base}/api/publico/procesos/${encodeURIComponent(idEleccion)}/eventos`);
+      } catch {
+        setConexion("reconectando; respaldo automático activo");
+        return;
+      }
+      eventos.addEventListener("conectado", () => {
+        if (!activa) return;
+        setConexion("en vivo");
+        // También recupera cambios ocurridos durante una desconexión.
+        actualizar();
+      });
+      eventos.addEventListener("acta_consolidada", actualizar);
+      eventos.onerror = () => {
+        if (!activa || document.visibilityState === "hidden") return;
+        setConexion("reconectando; respaldo automático activo");
+      };
+    };
+
+    const alCambiarVisibilidad = () => {
+      if (document.visibilityState === "visible") {
+        actualizar();
+        conectar();
+      } else {
+        controladorSolicitud?.abort();
+        eventos?.close();
+        eventos = null;
+      }
+    };
+    const alEnfocarVentana = () => {
+      if (document.visibilityState === "visible") actualizar();
+    };
+
+    actualizarRef.current = actualizar;
     actualizar();
-    const intervalo = window.setInterval(actualizar, 15000);
+    conectar();
+    // Respaldo periódico incluso si una notificación no llega al navegador.
+    const intervalo = window.setInterval(actualizar, 60000);
+    document.addEventListener("visibilitychange", alCambiarVisibilidad);
+    window.addEventListener("focus", alEnfocarVentana);
+
     return () => {
       activa = false;
       window.clearInterval(intervalo);
+      document.removeEventListener("visibilitychange", alCambiarVisibilidad);
+      window.removeEventListener("focus", alEnfocarVentana);
+      controladorSolicitud?.abort();
+      eventos?.close();
+      if (actualizarRef.current === actualizar) actualizarRef.current = null;
     };
   }, [cargar, idEleccion]);
 
@@ -85,7 +177,7 @@ function ActasRecientes({ actas }) {
 }
 
 function ResultadoGeneral({ resultado, tipoGrafica }) {
-  const candidatos = Object.entries(resultado.candidatos || {}).map(([id, candidato], indice) => ({ id, ...candidato, color: candidato.color_hex || colores[indice % colores.length] }));
+  const candidatos = ordenarCandidatosPorNumeroLista(Object.entries(resultado.candidatos || {}).map(([id, candidato], indice) => ({ id, ...candidato, color: candidato.color_hex || colores[indice % colores.length] })));
   const ganadores = resultado.ganadores_provisionales || [];
   return <article className="border border-slate-200 bg-white p-4 sm:p-6" data-testid={`grafica-publica-${resultado.titulo}`}><div className="flex flex-wrap items-start justify-between gap-4"><div><div className="text-[10px] font-data uppercase tracking-widest text-slate-500">{resultado.nombre_papeleta}</div><h2 className="mt-1 font-display text-xl font-bold">{resultado.titulo}</h2><div className="mt-1 text-xs text-slate-500">Base {resultado.base_votos} · Umbral {resultado.umbral_primera_vuelta}</div></div><Ganador candidatos={candidatos} ganadores={ganadores} /></div><Grafica candidatos={candidatos} tipo={tipoGrafica} /><Listado candidatos={candidatos} /></article>;
 }
@@ -96,7 +188,7 @@ function ResultadosUniversitarios({ datos, tipoGrafica }) {
 }
 
 function ResultadoEstamento({ nombre, resultado, tipoGrafica }) {
-  const candidatos = Object.entries(resultado?.candidatos || {}).map(([id, candidato], indice) => ({ id, ...candidato, color: colores[indice % colores.length] }));
+  const candidatos = ordenarCandidatosPorNumeroLista(Object.entries(resultado?.candidatos || {}).map(([id, candidato], indice) => ({ id, ...candidato, color: colores[indice % colores.length] })));
   return <div className="border border-slate-200 bg-slate-50 p-4" data-testid={`resultado-estamento-publico-${nombre.toLowerCase()}`}><div className="flex justify-between gap-3"><div className="font-display font-bold">{nombre}</div><UmbralEstamento candidatos={candidatos} ganadores={resultado?.ganadores_primera_vuelta || []} /></div><div className="mt-2 text-xs text-slate-500">Base {resultado?.base_votos || 0} · Umbral {resultado?.umbral_primera_vuelta || 1}</div><Grafica candidatos={candidatos} tipo={tipoGrafica} compacto /><Listado candidatos={candidatos} /></div>;
 }
 

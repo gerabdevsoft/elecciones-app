@@ -10,6 +10,19 @@ function ordenarPorNumeroNatural(elementos, campo) {
   ));
 }
 
+export function ordenarCandidatosPorNumeroLista(candidatos = []) {
+  return candidatos
+    .map((candidato, indice) => ({ candidato, indice, numero: Number(candidato?.numero_lista) }))
+    .sort((a, b) => {
+      const aTieneNumero = Number.isFinite(a.numero) && a.candidato?.numero_lista !== null && a.candidato?.numero_lista !== undefined && a.candidato?.numero_lista !== "";
+      const bTieneNumero = Number.isFinite(b.numero) && b.candidato?.numero_lista !== null && b.candidato?.numero_lista !== undefined && b.candidato?.numero_lista !== "";
+      if (aTieneNumero !== bTieneNumero) return aTieneNumero ? -1 : 1;
+      if (aTieneNumero && a.numero !== b.numero) return a.numero - b.numero;
+      return a.indice - b.indice;
+    })
+    .map(({ candidato }) => candidato);
+}
+
 export function ordenarMesasNumericamente(mesas = []) {
   return ordenarPorNumeroNatural(mesas, "numero_mesa");
 }

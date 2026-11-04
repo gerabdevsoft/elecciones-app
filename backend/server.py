@@ -34,7 +34,8 @@ from fastapi import (
     WebSocketDisconnect,
     Request,
 )
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
+from backend.eventos_resultados import canales_resultados_publicos
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, Field, EmailStr, ConfigDict, field_validator
@@ -82,6 +83,7 @@ class GestorResultadosEnVivo:
             self.conexiones.pop(id_eleccion, None)
 
     async def publicar(self, id_eleccion: str, evento: dict) -> None:
+        canales_resultados_publicos.publicar(id_eleccion)
         conexiones = list(self.conexiones.get(id_eleccion, set()))
         for websocket in conexiones:
             try:
@@ -2010,7 +2012,7 @@ async def resumen_eleccion(id_eleccion: str, usuario: dict = Depends(requerir_re
                 "titulo": f["titulo"],
                 "nombre_papeleta": p.get("nombre", ""),
                 "tipo_voto": f.get("tipo_voto"),
-                "candidatos": {c["id_candidato"]: {"nombre": c["nombre"], "partido": c.get("partido"), "sigla": c.get("sigla"), "color_hex": c.get("color_hex"), "votos": 0} for c in f.get("candidatos", [])},
+                "candidatos": {c["id_candidato"]: {"nombre": c["nombre"], "partido": c.get("partido"), "sigla": c.get("sigla"), "color_hex": c.get("color_hex"), "numero_lista": c.get("numero_lista"), "votos": 0} for c in f.get("candidatos", [])},
                 "votos_blancos": 0, "votos_nulos": 0, "total_validos": 0,
             }
 
@@ -2177,6 +2179,7 @@ async def _consolidado_publico(id_eleccion: str) -> dict:
                         "partido": candidato.get("partido"),
                         "sigla": candidato.get("sigla"),
                         "color_hex": candidato.get("color_hex"),
+                        "numero_lista": candidato.get("numero_lista"),
                         "votos": 0,
                     }
                     for candidato in franja.get("candidatos", [])
@@ -2376,6 +2379,7 @@ async def acta_publica(id_eleccion: str, id_anfora: str):
                     "color_hex": candidato.get("color_hex"),
                     "partido": candidato.get("partido"),
                     "sigla": candidato.get("sigla"),
+                    "numero_lista": candidato.get("numero_lista"),
                 }
                 for candidato in franja.get("candidatos", [])
             ],
@@ -3531,6 +3535,7 @@ async def _calcular_resultado_universitario(id_eleccion: str) -> dict:
                 "candidatos": {
                     candidato["id_candidato"]: {
                         "nombre": candidato["nombre"],
+                        "numero_lista": candidato.get("numero_lista"),
                         "votos": 0,
                     }
                     for candidato in franja.get("candidatos", [])
@@ -3620,6 +3625,36 @@ async def websocket_resultados(websocket: WebSocket, id_eleccion: str):
             await websocket.receive_text()
     except WebSocketDisconnect:
         gestor_resultados_en_vivo.desconectar(id_eleccion, websocket)
+
+
+@api.get("/publico/procesos/{id_eleccion}/eventos")
+async def eventos_resultados_publicos(id_eleccion: str, request: Request):
+    proceso = await db.procesos_electorales.find_one(
+        {"id_eleccion": id_eleccion, "activo": True},
+        {"_id": 0, "id_eleccion": 1},
+    )
+    if not proceso:
+        raise HTTPException(404, "Proceso electoral no disponible")
+
+    cola = canales_resultados_publicos.suscribir(id_eleccion)
+
+    async def transmitir():
+        try:
+            yield "retry: 5000\nevent: conectado\ndata: {}\n\n"
+            while not await request.is_disconnected():
+                try:
+                    await asyncio.wait_for(cola.get(), timeout=20)
+                    yield 'event: acta_consolidada\ndata: {}\n\n'
+                except asyncio.TimeoutError:
+                    yield ": mantener conexion\n\n"
+        finally:
+            canales_resultados_publicos.desuscribir(id_eleccion, cola)
+
+    return StreamingResponse(
+        transmitir(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache, no-transform", "X-Accel-Buffering": "no"},
+    )
 
 
 @app.websocket("/api/ws/publico/{id_eleccion}")

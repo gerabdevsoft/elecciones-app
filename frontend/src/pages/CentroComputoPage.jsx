@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState, useRef } from "react";
 import { api, formatearError } from "@/lib/api";
-import { ordenarAnforasNumericamente } from "@/lib/sorting";
+import { ordenarAnforasNumericamente, ordenarCandidatosPorNumeroLista } from "@/lib/sorting";
 import {
   construirFiltrosEstructura,
   filtrarAnforasPorEstructura,
@@ -576,7 +576,7 @@ export default function CentroComputoPage() {
                         </div>
                       </div>
                       <div className="p-3 space-y-2">
-                        {(fr.candidatos || []).map((c) => (
+                        {ordenarCandidatosPorNumeroLista(fr.candidatos).map((c) => (
                           <div key={c.id_candidato} className="flex items-center gap-3 p-2 rounded-md border border-slate-100 hover:border-slate-300 transition">
                             <div className="w-2 h-8 rounded-sm shrink-0" style={{ background: c.color_hex || "#94A3B8" }} />
                             <div className="flex-1 min-w-0">
