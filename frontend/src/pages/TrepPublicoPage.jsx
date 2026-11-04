@@ -330,7 +330,7 @@ function DetalleActaPublica({ acta, error, cargando }) {
           <h2 className="mt-1 font-display text-xl font-semibold tracking-tight text-slate-900">
             Mesa {acta.numero_mesa ?? "—"}
           </h2>
-          <p className="mt-1 text-xs text-slate-600">Enviada {fechaLegible(acta.enviado_en || acta.actualizado_en)}</p>
+          <p className="mt-1 text-xs text-slate-600">Consolidada {fechaLegible(acta.enviado_en || acta.actualizado_en)}</p>
         </div>
         <div className="flex items-center gap-2 self-start rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-[10px] font-bold uppercase tracking-[0.12em] text-emerald-800 sm:self-auto">
           <span className="h-1.5 w-1.5 rounded-full bg-emerald-600" />
