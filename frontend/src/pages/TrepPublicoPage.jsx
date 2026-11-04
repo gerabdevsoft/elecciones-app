@@ -449,32 +449,38 @@ function DetalleActaPublica({ acta, error, cargando }) {
                                       <div className="font-data text-[10px] uppercase tracking-widest text-slate-500">{candidato.sigla || candidato.partido}</div>
                                     ) : null}
                                   </div>
-                                  <Input type="number" value={Number(candidato.votos) || 0} disabled readOnly className="w-24 text-right font-data font-bold" />
+                                  <div className="w-24 text-right font-data font-bold tabular-nums text-black" data-testid="votos-candidato-publico">
+                                    {Number(candidato.votos) || 0}
+                                  </div>
                                 </div>
                               ))}
                             </div>
                             <div className="grid grid-cols-2 gap-3 p-3 pt-0">
                               {franja.permite_blancos !== false ? (
                                 <div>
-                                  <Label className="font-data text-[10px] uppercase tracking-widest text-slate-500">Votos Blancos</Label>
-                                  <Input type="number" value={Number(franja.votos_blancos) || 0} disabled readOnly className="font-data font-bold" />
+                                  <div className="font-data text-[10px] font-bold uppercase tracking-widest text-black">Votos Blancos</div>
+                                  <div className="mt-1 font-data font-bold tabular-nums text-black" data-testid="votos-blancos-publico">
+                                    {Number(franja.votos_blancos) || 0}
+                                  </div>
                                 </div>
                               ) : null}
                               {franja.permite_nulos !== false ? (
                                 <div>
-                                  <Label className="font-data text-[10px] uppercase tracking-widest text-slate-500">Votos Nulos</Label>
-                                  <Input type="number" value={Number(franja.votos_nulos) || 0} disabled readOnly className="font-data font-bold" />
+                                  <div className="font-data text-[10px] font-bold uppercase tracking-widest text-black">Votos Nulos</div>
+                                  <div className="mt-1 font-data font-bold tabular-nums text-black" data-testid="votos-nulos-publico">
+                                    {Number(franja.votos_nulos) || 0}
+                                  </div>
                                 </div>
                               ) : null}
                             </div>
                             <div className="mx-3 mb-3 flex items-center justify-between rounded-md border border-slate-200 bg-slate-50 p-3 font-data text-sm">
                               <div>
                                 <div className="text-[10px] uppercase tracking-widest text-slate-500">Válidos franja</div>
-                                <div className="text-lg font-bold">{totales.validos}</div>
+                                <div className="text-lg font-bold text-black">{totales.validos}</div>
                               </div>
                               <div>
                                 <div className="text-[10px] uppercase tracking-widest text-slate-500">Total / habilitados</div>
-                                <div className={`text-lg font-bold ${votantes != null && totales.total > votantes ? "text-red-700" : ""}`}>
+                                <div className={`text-lg font-bold ${votantes != null && totales.total > votantes ? "text-red-700" : "text-black"}`}>
                                   {totales.total} / {votantes ?? "—"}
                                 </div>
                               </div>
