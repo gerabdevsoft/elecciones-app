@@ -81,6 +81,15 @@ export default function CentroComputoPage() {
   const puedeCargar = permisos?.puede_cargar || false;
   const puedeValidar = permisos?.puede_validar || false;
   const puedeEditar = !cargandoActa && !esBloqueado && (permisos?.es_admin || puedeCargar || puedeValidar);
+  const esAutorActa = Boolean(usuario && actaActual && [
+    actaActual.id_creador,
+    actaActual.id_operador,
+    actaActual.id_enviado_por,
+  ].includes(usuario.id));
+  const requiereValidadorIndependiente = Boolean(
+    puedeValidar && !permisos?.es_admin && esAutorActa,
+  );
+  const puedeConsolidarActa = puedeValidar && !requiereValidadorIndependiente;
   const claveEstadoActual = esBloqueado ? "consolidada" : (actaActual?.estado || "sin_datos");
   const estadoActual = ESTADO_ANFORA[claveEstadoActual] || {
     etiqueta: String(claveEstadoActual).replaceAll("_", " "),
@@ -317,6 +326,10 @@ export default function CentroComputoPage() {
 
   const consolidarBloquear = async () => {
     if (!actaActual) { toast.warning("Guarde el acta antes de consolidar."); return; }
+    if (!puedeConsolidarActa) {
+      toast.error("Por control independiente, otro validador asignado debe consolidar esta acta.");
+      return;
+    }
     try {
       setConsolidando(true);
       await api.post("/centro-computo/bloquear", { id_acta: actaActual.id });
@@ -660,6 +673,11 @@ export default function CentroComputoPage() {
                 : "Verifique que todos los votos sean números enteros no negativos."}
             </div>
           )}
+          {requiereValidadorIndependiente && !esBloqueado && (
+            <div className="mt-4 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900" role="status" data-testid="aviso-validacion-independiente">
+              Registraste este borrador. Por control independiente, otro validador asignado debe abrir esta ánfora y consolidarla.
+            </div>
+          )}
           <div className="mt-6 grid grid-cols-1 gap-2 border-t border-slate-200 pt-4 sm:grid-cols-2" data-testid="barra-acciones-acta">
             <Button variant="outline" onClick={guardar} disabled={!puedeEditar || bloquearGuardadoPorVotantes} data-testid="acta-enable-edit-button" className="h-10 w-full justify-center">
               <Save className="w-4 h-4 mr-2" /> Guardar borrador
@@ -674,7 +692,7 @@ export default function CentroComputoPage() {
                 <AlertTriangle className="w-4 h-4 mr-2" /> Observar
               </Button>
             )}
-            <Button onClick={() => setModalConsolidacion(true)} disabled={esBloqueado || !actaActual || !puedeValidar}
+            <Button onClick={() => setModalConsolidacion(true)} disabled={esBloqueado || !actaActual || !puedeConsolidarActa}
               className="h-10 w-full justify-center bg-[#059669] hover:bg-[#047857]" data-testid="acta-consolidate-block-button">
               <Lock className="w-4 h-4 mr-2" /> Consolidar y Bloquear
             </Button>
