@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState, useRef } from "react";
-import { api, formatearError } from "@/lib/api";
+import { api, formatearError, normalizarRutaApi } from "@/lib/api";
 import { ordenarAnforasNumericamente, ordenarCandidatosPorNumeroLista } from "@/lib/sorting";
 import {
   construirFiltrosEstructura,
@@ -61,6 +61,7 @@ export default function CentroComputoPage() {
   const [meta, setMeta] = useState({ departamento: "La Paz", ciudad: "La Paz", recinto: "", ambiente: "", numero_anfora: "" });
   const [urlImagen, setUrlImagen] = useState(null);
   const [imagenSeguraBlob, setImagenSeguraBlob] = useState(null);
+  const [imagenPendientePersistencia, setImagenPendientePersistencia] = useState(false);
   const [rutaStorage, setRutaStorage] = useState(null);
   const [conteos, setConteos] = useState({});
   const [zoom, setZoom] = useState(1);
@@ -74,6 +75,7 @@ export default function CentroComputoPage() {
   const [consolidando, setConsolidando] = useState(false);
   const inputFile = useRef(null);
   const solicitudAnforaRef = useRef(0);
+  const imagenPreviaLocalRef = useRef(null);
 
   const esBloqueado = actaActual?.esta_bloqueada || false;
   const puedeCargar = permisos?.puede_cargar || false;
@@ -98,13 +100,15 @@ export default function CentroComputoPage() {
     anforaSeleccionada?.id_papeletas?.includes(papeleta.id_papeleta)
   ));
   useEffect(() => {
+    if (imagenPendientePersistencia) return undefined;
     if (!urlImagen) {
       setImagenSeguraBlob(null);
       return undefined;
     }
     let urlTemporal = null;
     let activa = true;
-    api.get(urlImagen, { responseType: "blob" })
+    setImagenSeguraBlob(null);
+    api.get(normalizarRutaApi(urlImagen), { responseType: "blob" })
       .then(({ data }) => {
         urlTemporal = URL.createObjectURL(data);
         if (activa) setImagenSeguraBlob(urlTemporal);
@@ -116,7 +120,22 @@ export default function CentroComputoPage() {
       activa = false;
       if (urlTemporal) URL.revokeObjectURL(urlTemporal);
     };
-  }, [urlImagen]);
+  }, [urlImagen, imagenPendientePersistencia]);
+
+  useEffect(() => () => {
+    if (imagenPreviaLocalRef.current) {
+      URL.revokeObjectURL(imagenPreviaLocalRef.current);
+    }
+  }, []);
+
+  const limpiarVistaPreviaLocal = () => {
+    if (imagenPreviaLocalRef.current) {
+      URL.revokeObjectURL(imagenPreviaLocalRef.current);
+      imagenPreviaLocalRef.current = null;
+    }
+    setImagenPendientePersistencia(false);
+    setImagenSeguraBlob(null);
+  };
   const cargarPermisos = useCallback(async () => {
     if (!procesoActivo?.id_eleccion) return;
     try {
@@ -209,6 +228,7 @@ export default function CentroComputoPage() {
 
   const limpiarSeleccionAnfora = () => {
     solicitudAnforaRef.current += 1;
+    limpiarVistaPreviaLocal();
     setAnforaSeleccionada(null);
     setActaActual(null);
     setUrlImagen(null);
@@ -221,6 +241,7 @@ export default function CentroComputoPage() {
   };
 
   const cargarActa = (a, anfora = anforaSeleccionada) => {
+    limpiarVistaPreviaLocal();
     setActaActual(a);
     setUrlImagen(a.url_imagen);
     setRutaStorage(a.ruta_storage);
@@ -260,6 +281,12 @@ export default function CentroComputoPage() {
       fd.append("id_anfora", anforaSeleccionada.id);
       fd.append("archivo", comprimida);
       const { data } = await api.post("/subir-imagen-acta", fd, { headers: { "Content-Type": "multipart/form-data" } });
+      if (imagenPreviaLocalRef.current) {
+        URL.revokeObjectURL(imagenPreviaLocalRef.current);
+      }
+      imagenPreviaLocalRef.current = URL.createObjectURL(comprimida);
+      setImagenSeguraBlob(imagenPreviaLocalRef.current);
+      setImagenPendientePersistencia(true);
       setUrlImagen(data.url_imagen);
       setRutaStorage(data.ruta_storage);
       toast.success("Imagen guardada. Registre los votos manualmente.");

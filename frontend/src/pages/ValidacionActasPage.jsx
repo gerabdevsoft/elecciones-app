@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { api, formatearError } from "@/lib/api";
+import { api, formatearError, normalizarRutaApi } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
 import { ordenarCandidatosPorNumeroLista } from "@/lib/sorting";
 import { Button } from "@/components/ui/button";
@@ -210,7 +210,7 @@ export default function ValidacionActasPage() {
     let urlTemporal = null;
     let activa = true;
     setImagenBlob(null);
-    api.get(acta.url_imagen, { responseType: "blob" })
+    api.get(normalizarRutaApi(acta.url_imagen), { responseType: "blob" })
       .then(({ data }) => {
         urlTemporal = URL.createObjectURL(data);
         if (activa) setImagenBlob(urlTemporal);
