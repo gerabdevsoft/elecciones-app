@@ -667,7 +667,7 @@ class CrearUsuarioOperativoReq(BaseModel):
 
 class AsignacionOperativaReq(BaseModel):
     id_usuario: str
-    funcion: Literal["carga", "validacion"]
+    funcion: Literal["carga", "validacion", "carga_validacion"]
     id_nodos: List[str] = Field(default_factory=list)
     id_recintos: List[str] = Field(default_factory=list)
     id_mesas: List[str] = Field(default_factory=list)
@@ -771,7 +771,12 @@ async def _asignaciones_operativas_usuario(
 ) -> List[dict]:
     consulta = {"id_usuario": id_usuario, "id_eleccion": id_eleccion}
     if funcion:
-        consulta["funcion"] = funcion
+        if funcion == "carga":
+            consulta["funcion"] = {"$in": ["carga", "carga_validacion"]}
+        elif funcion == "validacion":
+            consulta["funcion"] = {"$in": ["validacion", "carga_validacion"]}
+        else:
+            consulta["funcion"] = funcion
     return await db.asignaciones_operativas.find(consulta, {"_id": 0}).to_list(500)
 
 
@@ -824,18 +829,53 @@ async def _autorizar_anfora_operativa(
     if accion in {"validar", "bloquear"} and acta:
         autores = {acta.get("id_creador"), acta.get("id_operador"), acta.get("id_enviado_por")}
         if usuario["id"] in autores:
+            asignaciones_combinadas = await _asignaciones_operativas_usuario(
+                usuario["id"],
+                id_eleccion,
+                "carga_validacion",
+            )
+            filtro_combinado = _filtro_anforas_asignadas(asignaciones_combinadas)
+            puede_validar_su_acta = await db.anforas_mesa.find_one(
+                {"id": id_anfora, "id_eleccion": id_eleccion, **filtro_combinado},
+                {"_id": 1},
+            )
+            if puede_validar_su_acta:
+                return anfora
             raise HTTPException(403, "No puede validar ni bloquear un acta que cargó o envió")
     return anfora
 
 
-async def _permisos_operativos(usuario: dict, id_eleccion: str) -> dict:
+async def _permisos_operativos(
+    usuario: dict,
+    id_eleccion: str,
+    id_anfora: Optional[str] = None,
+) -> dict:
     if usuario.get("rol") == "admin":
-        return {"puede_cargar": True, "puede_validar": True, "es_admin": True}
+        return {
+            "puede_cargar": True,
+            "puede_validar": True,
+            "puede_autovalidar": True,
+            "es_admin": True,
+        }
     carga = await _asignaciones_operativas_usuario(usuario["id"], id_eleccion, "carga")
     validacion = await _asignaciones_operativas_usuario(usuario["id"], id_eleccion, "validacion")
+    combinada = await _asignaciones_operativas_usuario(
+        usuario["id"],
+        id_eleccion,
+        "carga_validacion",
+    )
+    filtro_combinado = _filtro_anforas_asignadas(combinada)
+    if id_anfora:
+        puede_autovalidar = bool(await db.anforas_mesa.find_one(
+            {"id": id_anfora, "id_eleccion": id_eleccion, **filtro_combinado},
+            {"_id": 1},
+        ))
+    else:
+        puede_autovalidar = bool(filtro_combinado.get("$or"))
     return {
         "puede_cargar": bool(_filtro_anforas_asignadas(carga).get("$or")),
         "puede_validar": bool(_filtro_anforas_asignadas(validacion).get("$or")),
+        "puede_autovalidar": puede_autovalidar,
         "es_admin": False,
     }
 
@@ -1168,8 +1208,12 @@ async def observar_acta(req: ObservarActaReq, usuario: dict = Depends(usuario_ac
 
 
 @api.get("/operacion/procesos/{id_eleccion}/permisos")
-async def permisos_operacion(id_eleccion: str, usuario: dict = Depends(usuario_actual)):
-    return await _permisos_operativos(usuario, id_eleccion)
+async def permisos_operacion(
+    id_eleccion: str,
+    id_anfora: Optional[str] = None,
+    usuario: dict = Depends(usuario_actual),
+):
+    return await _permisos_operativos(usuario, id_eleccion, id_anfora)
 
 
 @api.get("/operacion/procesos/{id_eleccion}/actas-pendientes-validacion")
@@ -1197,8 +1241,20 @@ async def listar_actas_pendientes_validacion(
         ids_anforas = [anfora["id"] for anfora in anforas_asignadas]
         if not ids_anforas:
             return []
+        asignaciones_combinadas = await _asignaciones_operativas_usuario(
+            usuario["id"],
+            id_eleccion,
+            "carga_validacion",
+        )
+        filtro_combinado = _filtro_anforas_asignadas(asignaciones_combinadas)
+        anforas_combinadas = await db.anforas_mesa.find(
+            {"id_eleccion": id_eleccion, **filtro_combinado},
+            {"_id": 0, "id": 1},
+        ).to_list(20000)
+        ids_anforas_autovalidables = {anfora["id"] for anfora in anforas_combinadas}
     else:
         ids_anforas = None
+        ids_anforas_autovalidables = set()
 
     filtro_actas = {
         "id_eleccion": id_eleccion,
@@ -1228,14 +1284,14 @@ async def listar_actas_pendientes_validacion(
     }
     actas = await db.actas.find(filtro_actas, campos).to_list(20000)
     if usuario.get("rol") != "admin":
-        # Un operador no debe validar un acta que él mismo registró o envió.
+        # Solo una asignación combinada permite validar actas propias dentro de su ámbito.
         actas = [
             acta for acta in actas
             if usuario["id"] not in {
                 acta.get("id_creador"),
                 acta.get("id_operador"),
                 acta.get("id_enviado_por"),
-            }
+            } or acta.get("id_anfora") in ids_anforas_autovalidables
         ]
     ids_mesas = list({acta.get("id_mesa") for acta in actas if acta.get("id_mesa")})
     ids_anforas_actas = list({acta.get("id_anfora") for acta in actas if acta.get("id_anfora")})

@@ -87,7 +87,10 @@ export default function CentroComputoPage() {
     actaActual.id_enviado_por,
   ].includes(usuario.id));
   const requiereValidadorIndependiente = Boolean(
-    puedeValidar && !permisos?.es_admin && esAutorActa,
+    puedeValidar
+      && !permisos?.es_admin
+      && esAutorActa
+      && !permisos?.puede_autovalidar,
   );
   const puedeConsolidarActa = puedeValidar && !requiereValidadorIndependiente;
   const claveEstadoActual = esBloqueado ? "consolidada" : (actaActual?.estado || "sin_datos");
@@ -145,12 +148,17 @@ export default function CentroComputoPage() {
     setImagenPendientePersistencia(false);
     setImagenSeguraBlob(null);
   };
-  const cargarPermisos = useCallback(async () => {
+  const cargarPermisos = useCallback(async (idAnfora = null, idSolicitud = null) => {
     if (!procesoActivo?.id_eleccion) return;
     try {
-      const { data } = await api.get(`/operacion/procesos/${procesoActivo.id_eleccion}/permisos`);
+      const parametroAnfora = idAnfora ? `?id_anfora=${encodeURIComponent(idAnfora)}` : "";
+      const { data } = await api.get(
+        `/operacion/procesos/${procesoActivo.id_eleccion}/permisos${parametroAnfora}`,
+      );
+      if (idSolicitud !== null && solicitudAnforaRef.current !== idSolicitud) return;
       setPermisos(data);
     } catch (e) {
+      if (idSolicitud !== null && solicitudAnforaRef.current !== idSolicitud) return;
       setPermisos({ puede_cargar: false, puede_validar: false, es_admin: false });
     }
   }, [procesoActivo?.id_eleccion]);
@@ -200,6 +208,10 @@ export default function CentroComputoPage() {
   const seleccionarAnfora = async (anfora) => {
     const idSolicitud = solicitudAnforaRef.current + 1;
     solicitudAnforaRef.current = idSolicitud;
+    setPermisos((anteriores) => anteriores
+      ? { ...anteriores, puede_autovalidar: false }
+      : anteriores);
+    cargarPermisos(anfora.id, idSolicitud);
     setAnforaSeleccionada(anfora);
     setActaActual(null);
     setCargandoActa(true);
