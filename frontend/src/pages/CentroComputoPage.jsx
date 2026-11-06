@@ -53,6 +53,7 @@ function conteosIniciales(proceso, papeletas) {
 export default function CentroComputoPage() {
   const { usuario, procesoActivo } = useAuth();
   const [permisos, setPermisos] = useState(null);
+  const [cargandoPermisosAnfora, setCargandoPermisosAnfora] = useState(false);
   const [localizador, setLocalizador] = useState(null);
   const [cargandoLocalizador, setCargandoLocalizador] = useState(true);
   const [errorLocalizador, setErrorLocalizador] = useState("");
@@ -86,11 +87,13 @@ export default function CentroComputoPage() {
     actaActual.id_operador,
     actaActual.id_enviado_por,
   ].includes(usuario.id));
+  const esRolCombinadoEnAnfora = Boolean(permisos?.puede_autovalidar);
+  const ocultarAccionesDeValidacion = esRolCombinadoEnAnfora || cargandoPermisosAnfora;
   const requiereValidadorIndependiente = Boolean(
     puedeValidar
       && !permisos?.es_admin
       && esAutorActa
-      && !permisos?.puede_autovalidar,
+      && !esRolCombinadoEnAnfora,
   );
   const puedeConsolidarActa = puedeValidar && !requiereValidadorIndependiente;
   const claveEstadoActual = esBloqueado ? "consolidada" : (actaActual?.estado || "sin_datos");
@@ -150,6 +153,7 @@ export default function CentroComputoPage() {
   };
   const cargarPermisos = useCallback(async (idAnfora = null, idSolicitud = null) => {
     if (!procesoActivo?.id_eleccion) return;
+    if (idAnfora) setCargandoPermisosAnfora(true);
     try {
       const parametroAnfora = idAnfora ? `?id_anfora=${encodeURIComponent(idAnfora)}` : "";
       const { data } = await api.get(
@@ -160,6 +164,10 @@ export default function CentroComputoPage() {
     } catch (e) {
       if (idSolicitud !== null && solicitudAnforaRef.current !== idSolicitud) return;
       setPermisos({ puede_cargar: false, puede_validar: false, es_admin: false });
+    } finally {
+      if (idSolicitud !== null && solicitudAnforaRef.current === idSolicitud) {
+        setCargandoPermisosAnfora(false);
+      }
     }
   }, [procesoActivo?.id_eleccion]);
 
@@ -201,6 +209,7 @@ export default function CentroComputoPage() {
     setActaActual(null);
     setLocalizador(null);
     setErrorLocalizador("");
+    setCargandoPermisosAnfora(false);
     cargarLocalizador();
     cargarPermisos();
   }, [procesoActivo?.id_eleccion, cargarLocalizador, cargarPermisos]);
@@ -249,6 +258,7 @@ export default function CentroComputoPage() {
 
   const limpiarSeleccionAnfora = () => {
     solicitudAnforaRef.current += 1;
+    setCargandoPermisosAnfora(false);
     limpiarVistaPreviaLocal();
     setAnforaSeleccionada(null);
     setActaActual(null);
@@ -694,12 +704,12 @@ export default function CentroComputoPage() {
             <Button variant="outline" onClick={guardar} disabled={!puedeEditar || bloquearGuardadoPorVotantes} data-testid="acta-enable-edit-button" className="h-10 w-full justify-center">
               <Save className="w-4 h-4 mr-2" /> Guardar borrador
             </Button>
-            {puedeCargar && (
+            {puedeCargar && !ocultarAccionesDeValidacion && (
               <Button onClick={enviarValidacion} disabled={esBloqueado || !actaActual || actaActual?.estado === "enviado"} className="h-10 w-full justify-center" data-testid="enviar-validacion-button">
                 <Upload className="w-4 h-4 mr-2" /> Enviar a validación
               </Button>
             )}
-            {puedeValidar && !esBloqueado && actaActual && (
+            {puedeValidar && !ocultarAccionesDeValidacion && !esBloqueado && actaActual && (
               <Button variant="destructive" onClick={() => setModalObservacion(true)} className="h-10 w-full justify-center" data-testid="observar-acta-button">
                 <AlertTriangle className="w-4 h-4 mr-2" /> Observar
               </Button>
