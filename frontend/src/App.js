@@ -14,7 +14,8 @@ import DisenoPapeletaPage from "@/pages/DisenoPapeletaPage";
 import ImprimirPapeletaPage from "@/pages/ImprimirPapeletaPage";
 import EstructuraElectoralPage from "@/pages/EstructuraElectoralPage";
 import AsignacionesOperativasPage from "@/pages/AsignacionesOperativasPage";
-import { Vote, LogOut, Layers, ClipboardList, ClipboardCheck, BarChart3, Radio, ShieldCheck, Settings2, Users } from "lucide-react";
+import ReportesPage from "@/pages/ReportesPage";
+import { Vote, LogOut, Layers, ClipboardList, ClipboardCheck, BarChart3, Radio, ShieldCheck, Settings2, Users, FileText } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import "@/App.css";
 
@@ -64,6 +65,7 @@ function Cabecera() {
   if (usuario.rol === "admin") {
     enlaces.push({ to: "/gestion-electoral", label: "Gestión Electoral", icon: Settings2, testid: "nav-gestion" });
     enlaces.push({ to: "/asignaciones-operativas", label: "Asignaciones", icon: Users, testid: "nav-asignaciones" });
+    enlaces.push({ to: "/reportes", label: "Reportes", icon: FileText, testid: "nav-reportes" });
     enlaces.push({ to: "/bitacora", label: "Bitácora de Auditoría", icon: ShieldCheck, testid: "nav-bitacora" });
   }
 
@@ -156,6 +158,9 @@ export default function App() {
           } />
           <Route path="/asignaciones-operativas" element={
             <RequiereAuth><RequiereProceso><RequiereRol roles={["admin"]}><AppShell><AsignacionesOperativasPage /></AppShell></RequiereRol></RequiereProceso></RequiereAuth>
+          } />
+          <Route path="/reportes" element={
+            <RequiereAuth><RequiereProceso><RequiereRol roles={["admin"]}><AppShell><ReportesPage /></AppShell></RequiereRol></RequiereProceso></RequiereAuth>
           } />
           <Route path="/gestion-electoral/diseno/:id_eleccion" element={
             <RequiereAuth><AppShell><DisenoPapeletaPage /></AppShell></RequiereAuth>

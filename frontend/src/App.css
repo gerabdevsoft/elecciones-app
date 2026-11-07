@@ -1,1 +1,44 @@
 .App { min-height: 100vh; }
+
+.reportes-table th {
+  border-bottom: 1px solid #cbd5e1;
+  background: #f1f5f9;
+  color: #475569;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .06em;
+  padding: 9px 10px;
+  text-align: left;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.reportes-table td {
+  border-bottom: 1px solid #e2e8f0;
+  padding: 10px;
+  vertical-align: top;
+}
+
+.reportes-table th.text-right,
+.reportes-table td.text-right { text-align: right; }
+
+@media print {
+  @page { margin: 14mm; }
+  html, body, #root { background: #fff !important; min-height: 0 !important; }
+  body * { visibility: hidden !important; }
+  .reportes-print-area,
+  .reportes-print-area * { visibility: visible !important; }
+  .reportes-print-area {
+    background: #fff !important;
+    color: #111827 !important;
+    left: 0 !important;
+    margin: 0 !important;
+    position: absolute !important;
+    top: 0 !important;
+    width: 100% !important;
+  }
+  .reportes-print-button { display: none !important; }
+  .reportes-franja { break-inside: avoid; }
+  .reportes-table { min-width: 0 !important; }
+  .reportes-table th, .reportes-table td { font-size: 9pt !important; padding: 6px !important; }
+}
