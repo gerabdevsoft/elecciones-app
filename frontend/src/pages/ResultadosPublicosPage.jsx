@@ -12,11 +12,14 @@ const colores = ["#1E3A8A", "#059669", "#D97706", "#BE123C", "#7C3AED", "#0F766E
 export default function ResultadosPublicosPage() {
   const [procesos, setProcesos] = useState([]);
   const [idEleccion, setIdEleccion] = useState("");
+  const [idPapeleta, setIdPapeleta] = useState("");
+  const [idFranja, setIdFranja] = useState("");
   const [datos, setDatos] = useState(null);
   const [tipoGrafica, setTipoGrafica] = useState("barras");
   const [conexion, setConexion] = useState("actualizando");
   const [errorCarga, setErrorCarga] = useState("");
   const actualizarRef = useRef(null);
+  const seleccionRef = useRef({ id_papeleta: "", id_franja: "" });
 
   const cargarProcesos = useCallback(async () => {
     try {
@@ -35,9 +38,30 @@ export default function ResultadosPublicosPage() {
       signal = undefined;
     }
     if (!idEleccion) return false;
+    const seleccionSolicitada = { ...seleccionRef.current };
+    const params = new URLSearchParams();
+    if (seleccionSolicitada.id_papeleta) params.set("id_papeleta", seleccionSolicitada.id_papeleta);
+    if (seleccionSolicitada.id_franja) params.set("id_franja", seleccionSolicitada.id_franja);
+    const query = params.toString();
     try {
-      const { data } = await api.get(`/publico/procesos/${idEleccion}/resultados`, { signal, timeout: 30000 });
+      const { data } = await api.get(
+        `/publico/procesos/${encodeURIComponent(idEleccion)}/resultados${query ? `?${query}` : ""}`,
+        { signal, timeout: 30000 },
+      );
       if (signal?.aborted) return false;
+      if (
+        seleccionSolicitada.id_papeleta !== seleccionRef.current.id_papeleta
+        || seleccionSolicitada.id_franja !== seleccionRef.current.id_franja
+      ) return false;
+      if (!seleccionRef.current.id_franja && data.seleccion?.id_franja) {
+        const seleccionInicial = {
+          id_papeleta: data.seleccion.id_papeleta || "",
+          id_franja: data.seleccion.id_franja,
+        };
+        seleccionRef.current = seleccionInicial;
+        setIdPapeleta(seleccionInicial.id_papeleta);
+        setIdFranja(seleccionInicial.id_franja);
+      }
       setDatos(data);
       setErrorCarga("");
       return true;
@@ -60,6 +84,9 @@ export default function ResultadosPublicosPage() {
     let controladorSolicitud = null;
 
     setDatos(null);
+    seleccionRef.current = { id_papeleta: "", id_franja: "" };
+    setIdPapeleta("");
+    setIdFranja("");
     setConexion("actualizando");
 
     const actualizar = async () => {
@@ -151,8 +178,116 @@ export default function ResultadosPublicosPage() {
     };
   }, [cargar, idEleccion]);
 
+  const cambiarEleccion = (id) => {
+    seleccionRef.current = { id_papeleta: "", id_franja: "" };
+    setIdPapeleta("");
+    setIdFranja("");
+    setDatos(null);
+    setIdEleccion(id);
+  };
+  const seleccionarPapeleta = (id) => {
+    const papeleta = datos?.papeletas?.find((item) => item.id_papeleta === id);
+    const nuevaSeleccion = {
+      id_papeleta: id,
+      id_franja: papeleta?.franjas?.[0]?.id_franja || "",
+    };
+    seleccionRef.current = nuevaSeleccion;
+    setIdPapeleta(nuevaSeleccion.id_papeleta);
+    setIdFranja(nuevaSeleccion.id_franja);
+    actualizarRef.current?.();
+  };
+  const seleccionarFranja = (id) => {
+    const nuevaSeleccion = { id_papeleta: idPapeleta, id_franja: id };
+    seleccionRef.current = nuevaSeleccion;
+    setIdFranja(id);
+    actualizarRef.current?.();
+  };
+
   const esUniversitaria = datos?.proceso?.tipo === "universitaria";
-  return <div className="min-h-screen bg-slate-100" data-testid="resultados-publicos-page"><CabeceraPublica /><main className="mx-auto max-w-7xl p-4 sm:p-6 lg:p-8"><div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between"><div><div className="flex items-center gap-2 text-[10px] font-data uppercase tracking-widest text-emerald-700"><Radio className="w-3 h-3" /> Actualización automática · {conexion}</div><h1 className="mt-2 font-display text-3xl font-extrabold text-slate-900">Resultados electorales</h1><p className="mt-1 text-slate-600">Datos de actas consolidadas y bloqueadas.</p></div><div className="flex w-full flex-wrap gap-2 lg:w-auto"><Select value={idEleccion} onValueChange={setIdEleccion}><SelectTrigger className="w-full sm:w-[420px]" data-testid="seleccionar-eleccion-resultados-publicos"><SelectValue placeholder="Elección" /></SelectTrigger><SelectContent>{procesos.map((proceso) => <SelectItem key={proceso.id_eleccion} value={proceso.id_eleccion}>{proceso.nombre}</SelectItem>)}</SelectContent></Select><Select value={tipoGrafica} onValueChange={setTipoGrafica}><SelectTrigger className="w-full sm:w-[150px]" data-testid="tipo-grafica-publica"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="barras">Barras</SelectItem><SelectItem value="torta">Torta</SelectItem><SelectItem value="lineas">Líneas</SelectItem></SelectContent></Select></div></div>{errorCarga && datos ? <div className="mt-5 flex flex-wrap items-center justify-between gap-3 border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900" role="status"><span><AlertCircle className="mr-2 inline h-4 w-4" />No se pudo actualizar ahora. Se reintentará automáticamente.</span><Button variant="outline" size="sm" onClick={cargar}><RefreshCw className="h-3.5 w-3.5" /> Reintentar</Button></div> : null}{!datos ? errorCarga ? <div className="mt-8 border border-amber-200 bg-amber-50 p-6 text-sm text-amber-900" role="alert"><p>{errorCarga}</p><Button variant="outline" size="sm" className="mt-4" onClick={idEleccion ? cargar : cargarProcesos}><RefreshCw className="h-3.5 w-3.5" /> Reintentar</Button></div> : <div className="mt-8 border border-slate-200 bg-white p-8 text-sm text-slate-400" data-testid="cargando-resultados-publicos">Cargando resultados…</div> : <><section className="mt-8 grid grid-cols-1 gap-4 md:grid-cols-3" data-testid="avance-publico-anforas"><TarjetaAvance titulo="Ánforas totales" valor={datos.anforas.total} porcentaje="100" color="#1E3A8A" /><TarjetaAvance titulo="Actas consolidadas" valor={datos.anforas.escrutadas} porcentaje={datos.anforas.porcentaje_escrutadas} color="#059669" /><TarjetaAvance titulo="Actas faltantes" valor={datos.anforas.faltantes} porcentaje={datos.anforas.porcentaje_faltantes} color="#D97706" /></section><section className="mt-8 grid grid-cols-1 items-start gap-6 xl:grid-cols-[minmax(0,1fr)_20rem]"><div className="min-w-0 space-y-5">{esUniversitaria ? <ResultadosUniversitarios datos={datos.universitario} tipoGrafica={tipoGrafica} /> : Object.entries(datos.resultados).map(([idFranja, resultado]) => <ResultadoGeneral key={idFranja} resultado={resultado} tipoGrafica={tipoGrafica} />)}</div><ActasRecientes actas={datos.actas_recientes || []} /></section></>}</main></div>;
+  const papeletas = datos?.papeletas || [];
+  const papeletaActiva = papeletas.find((item) => item.id_papeleta === idPapeleta)
+    || papeletas.find((item) => item.id_papeleta === datos?.seleccion?.id_papeleta);
+  const idFranjaActiva = idFranja || datos?.seleccion?.id_franja || "";
+  const resultadoActivo = datos?.resultados?.[idFranjaActiva];
+  const avanceActas = datos?.actas || datos?.anforas;
+  return (
+    <div className="min-h-screen bg-slate-100" data-testid="resultados-publicos-page">
+      <CabeceraPublica />
+      <main className="mx-auto max-w-7xl p-4 sm:p-6 lg:p-8">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+          <div>
+            <div className="flex items-center gap-2 text-[10px] font-data uppercase tracking-widest text-emerald-700">
+              <Radio className="h-3 w-3" /> Actualización automática · {conexion}
+            </div>
+            <h1 className="mt-2 font-display text-3xl font-extrabold text-slate-900">Resultados electorales</h1>
+            <p className="mt-1 text-slate-600">Datos de actas consolidadas y bloqueadas.</p>
+          </div>
+          <div className="flex w-full flex-wrap gap-2 lg:w-auto">
+            <Select value={idEleccion} onValueChange={cambiarEleccion}>
+              <SelectTrigger className="w-full sm:w-[340px]" data-testid="seleccionar-eleccion-resultados-publicos">
+                <SelectValue placeholder="Elección" />
+              </SelectTrigger>
+              <SelectContent>{procesos.map((proceso) => <SelectItem key={proceso.id_eleccion} value={proceso.id_eleccion}>{proceso.nombre}</SelectItem>)}</SelectContent>
+            </Select>
+            <Select value={idPapeleta} onValueChange={seleccionarPapeleta} disabled={!papeletas.length}>
+              <SelectTrigger className="w-full sm:w-[250px]" data-testid="seleccionar-papeleta-resultados-publicos">
+                <SelectValue placeholder="Papeleta o boleta" />
+              </SelectTrigger>
+              <SelectContent>{papeletas.map((papeleta) => <SelectItem key={papeleta.id_papeleta} value={papeleta.id_papeleta}>{papeleta.nombre}</SelectItem>)}</SelectContent>
+            </Select>
+            <Select value={idFranjaActiva} onValueChange={seleccionarFranja} disabled={!papeletaActiva?.franjas?.length}>
+              <SelectTrigger className="w-full sm:w-[220px]" data-testid="seleccionar-franja-resultados-publicos">
+                <SelectValue placeholder="Franja" />
+              </SelectTrigger>
+              <SelectContent>{papeletaActiva?.franjas?.map((franja) => <SelectItem key={franja.id_franja} value={franja.id_franja}>{franja.titulo}</SelectItem>)}</SelectContent>
+            </Select>
+            <Select value={tipoGrafica} onValueChange={setTipoGrafica}>
+              <SelectTrigger className="w-full sm:w-[150px]" data-testid="tipo-grafica-publica"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="barras">Barras</SelectItem>
+                <SelectItem value="torta">Torta</SelectItem>
+                <SelectItem value="lineas">Líneas</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
+        {errorCarga && datos ? (
+          <div className="mt-5 flex flex-wrap items-center justify-between gap-3 border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900" role="status">
+            <span><AlertCircle className="mr-2 inline h-4 w-4" />No se pudo actualizar ahora. Se reintentará automáticamente.</span>
+            <Button variant="outline" size="sm" onClick={cargar}><RefreshCw className="h-3.5 w-3.5" /> Reintentar</Button>
+          </div>
+        ) : null}
+        {!datos ? (
+          errorCarga ? (
+            <div className="mt-8 border border-amber-200 bg-amber-50 p-6 text-sm text-amber-900" role="alert">
+              <p>{errorCarga}</p>
+              <Button variant="outline" size="sm" className="mt-4" onClick={idEleccion ? cargar : cargarProcesos}>
+                <RefreshCw className="h-3.5 w-3.5" /> Reintentar
+              </Button>
+            </div>
+          ) : <div className="mt-8 border border-slate-200 bg-white p-8 text-sm text-slate-400" data-testid="cargando-resultados-publicos">Cargando resultados…</div>
+        ) : (
+          <>
+            <section className="mt-8 grid grid-cols-1 gap-4 md:grid-cols-3" data-testid="avance-publico-anforas">
+              <TarjetaAvance titulo="Actas esperadas" valor={avanceActas.total} porcentaje="100" color="#1E3A8A" />
+              <TarjetaAvance titulo="Actas consolidadas" valor={avanceActas.escrutadas} porcentaje={avanceActas.porcentaje_escrutadas} color="#059669" />
+              <TarjetaAvance titulo="Actas faltantes" valor={avanceActas.faltantes} porcentaje={avanceActas.porcentaje_faltantes} color="#D97706" />
+            </section>
+            <section className="mt-8 grid grid-cols-1 items-start gap-6 xl:grid-cols-[minmax(0,1fr)_20rem]">
+              <div className="min-w-0 space-y-5">
+                {esUniversitaria && datos.universitario
+                  ? <ResultadosUniversitarios datos={datos.universitario} tipoGrafica={tipoGrafica} />
+                  : resultadoActivo
+                    ? <ResultadoGeneral resultado={resultadoActivo} tipoGrafica={tipoGrafica} />
+                    : <div className="border border-dashed border-slate-300 bg-white p-8 text-sm text-slate-500">No hay resultados configurados para esta papeleta y franja.</div>}
+              </div>
+              <ActasRecientes actas={datos.actas_recientes || []} />
+            </section>
+          </>
+        )}
+      </main>
+    </div>
+  );
 }
 
 function ActasRecientes({ actas }) {
@@ -166,6 +301,7 @@ function ActasRecientes({ actas }) {
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
             <div className="font-data text-sm font-bold text-slate-900">Ánfora {acta.numero_anfora || "—"}</div>
+            {acta.franja ? <div className="mt-1 text-xs font-semibold text-blue-700">{acta.franja}</div> : null}
             <div className="mt-1 flex items-start gap-1.5 text-xs text-slate-600"><MapPin className="mt-0.5 h-3.5 w-3.5 shrink-0 text-slate-400" /><span className="min-w-0 break-words">{acta.recinto || "Recinto sin nombre"}{acta.ambiente ? ` · ${acta.ambiente}` : ""}</span></div>
           </div>
           {acta.tipo_mesa && <span className="shrink-0 rounded-full bg-indigo-50 px-2 py-1 text-[10px] font-semibold uppercase text-indigo-700">{acta.tipo_mesa}</span>}

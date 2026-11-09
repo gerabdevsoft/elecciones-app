@@ -130,8 +130,15 @@ export default function ValidacionActasPage() {
   );
   const papeletasActivas = useMemo(() => {
     const ids = seleccionada?.id_papeletas || [];
-    return (procesoActivo?.papeletas || []).filter((papeleta) => ids.includes(papeleta.id_papeleta));
-  }, [procesoActivo?.papeletas, seleccionada?.id_papeletas]);
+    const idFranja = acta?.id_franja || seleccionada?.id_franja;
+    return (procesoActivo?.papeletas || [])
+      .filter((papeleta) => ids.includes(papeleta.id_papeleta))
+      .map((papeleta) => ({
+        ...papeleta,
+        franjas: (papeleta.franjas || []).filter((franja) => franja.id_franja === idFranja),
+      }))
+      .filter((papeleta) => papeleta.franjas.length > 0);
+  }, [acta?.id_franja, procesoActivo?.papeletas, seleccionada?.id_franja, seleccionada?.id_papeletas]);
   const tipoVotoSeleccionado = procesoActivo?.tipo === "universitaria"
     ? { docente: "Docente", estudiante: "Estudiante" }[acta?.tipo_mesa || seleccionada?.tipo_mesa]
     : null;
@@ -392,6 +399,9 @@ export default function ValidacionActasPage() {
                   const tipoVotoItem = procesoActivo?.tipo === "universitaria"
                     ? { docente: "Docente", estudiante: "Estudiante" }[item.tipo_mesa]
                     : null;
+                  const franjaItem = (procesoActivo?.papeletas || [])
+                    .flatMap((papeleta) => papeleta.franjas || [])
+                    .find((franja) => franja.id_franja === item.id_franja);
                   return (
                     <button
                       type="button"
@@ -408,6 +418,7 @@ export default function ValidacionActasPage() {
                               {index === 0 ? "MÁS ANTIGUA" : `EN COLA ${String(index + 1).padStart(2, "0")}`}
                             </span>
                             {tipoVotoItem && <span className="text-[10px] font-semibold uppercase tracking-wider text-blue-700">Tipo de voto: {tipoVotoItem}</span>}
+                            {franjaItem && <span className="text-[10px] font-semibold uppercase tracking-wider text-emerald-700">Franja: {franjaItem.titulo}</span>}
                           </div>
                           <h3 className="truncate font-display text-[15px] font-semibold text-slate-900">
                             Mesa {item.numero_mesa ?? "—"}

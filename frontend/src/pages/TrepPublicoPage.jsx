@@ -101,15 +101,22 @@ export default function TrepPublicoPage() {
     [localizador, rutaNodos, idRecinto],
   );
   const { niveles: nivelesNodos, idNodoTerminal, recintos, mesas } = filtrosEstructura;
+  const anforasFiltradas = useMemo(() => filtrarAnforasPorEstructura(
+    localizador?.anforas || [],
+    rutaNodos,
+    idRecinto,
+    idMesa,
+  ).filter((anfora) => (
+    !numeroDirecto.trim()
+      || String(anfora.numero_anfora).toLowerCase().includes(numeroDirecto.trim().toLowerCase())
+  )), [idMesa, idRecinto, localizador, numeroDirecto, rutaNodos]);
+  const anforasIdsFiltradas = useMemo(
+    () => new Set(anforasFiltradas.map((anfora) => anfora.id)),
+    [anforasFiltradas],
+  );
   const anforas = useMemo(() => ordenarAnforasNumericamente(
-    filtrarAnforasPorEstructura(localizador?.anforas || [], rutaNodos, idRecinto, idMesa)
-      .filter((anfora) => {
-        const coincideDirecta = numeroDirecto.trim()
-          ? String(anfora.numero_anfora).toLowerCase().includes(numeroDirecto.trim().toLowerCase())
-          : true;
-        return coincideDirecta;
-      }),
-  ), [idMesa, idRecinto, localizador, numeroDirecto, rutaNodos]);
+    (localizador?.actas || []).filter((acta) => anforasIdsFiltradas.has(acta.id_anfora)),
+  ), [anforasIdsFiltradas, localizador]);
 
   const seleccionarNodo = (indice, idNodo) => {
     setRutaNodos((anterior) => [...anterior.slice(0, indice), idNodo]);
@@ -121,13 +128,15 @@ export default function TrepPublicoPage() {
   const abrirActa = async (anfora) => {
     const idSolicitud = solicitudActaRef.current + 1;
     solicitudActaRef.current = idSolicitud;
-    setAnforaSeleccionadaId(anfora.id);
+    setAnforaSeleccionadaId(anfora.id_acta || anfora.id);
     setListaContraida(true);
     setActa(null);
     setErrorActa("");
     setCargandoActa(true);
     try {
-      const { data } = await api.get(`/publico/procesos/${idEleccion}/actas/${anfora.id}`);
+      const { data } = await api.get(
+        `/publico/procesos/${idEleccion}/actas/${anfora.id_anfora}?id_franja=${encodeURIComponent(anfora.id_franja)}`,
+      );
       if (solicitudActaRef.current === idSolicitud) setActa(data);
     } catch (error) {
       if (solicitudActaRef.current === idSolicitud) {
@@ -160,7 +169,7 @@ export default function TrepPublicoPage() {
               </div>
               <div>
                 <div className="font-data text-2xl font-semibold leading-none text-blue-900">
-                  {localizador ? localizador.anforas.length : "—"}
+                  {localizador ? localizador.actas?.length || 0 : "—"}
                 </div>
                 <div className="mt-1 text-[10px] font-semibold uppercase tracking-[0.15em] text-slate-600">Actas consolidadas</div>
               </div>
@@ -251,7 +260,8 @@ export default function TrepPublicoPage() {
                   const mesa = (localizador?.mesas || []).find((item) => item.id === anfora.id_mesa);
                   const recinto = (localizador?.recintos || []).find((item) => item.id === anfora.id_recinto);
                   const tipoVoto = nombreTipoVoto[mesa?.tipo_mesa];
-                  const activa = anforaSeleccionadaId === anfora.id;
+                  const idActa = anfora.id_acta || anfora.id;
+                  const activa = anforaSeleccionadaId === idActa;
                   return (
                     <button
                       key={anfora.id}
@@ -259,11 +269,11 @@ export default function TrepPublicoPage() {
                       onClick={() => abrirActa(anfora)}
                       aria-current={activa ? "true" : undefined}
                       className={`relative block w-full px-4 py-4 text-left transition-colors hover:bg-blue-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-600 sm:px-5 ${activa ? "bg-blue-50" : "bg-white"}`}
-                      data-testid={`abrir-acta-publica-${anfora.id}`}
+                      data-testid={`abrir-acta-publica-${idActa}`}
                     >
                       <span className={`absolute bottom-3 left-0 top-3 w-[3px] rounded-r ${activa ? "bg-blue-700" : "bg-transparent"}`} />
                       <div className="font-data text-xs font-bold text-slate-900">Ánfora {anfora.numero_anfora}</div>
-                      <div className="mt-1 text-sm font-semibold text-slate-900">{anfora.nombre}</div>
+                      <div className="mt-1 text-sm font-semibold text-slate-900">{anfora.franja}</div>
                       <div className="mt-1 text-xs text-slate-500">Mesa {mesa?.numero_mesa || "—"} · {recinto?.nombre || "—"}</div>
                       {tipoVoto ? <div className="mt-1 text-[10px] font-data uppercase text-blue-700">Tipo de voto: {tipoVoto}</div> : null}
                     </button>

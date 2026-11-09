@@ -98,6 +98,7 @@ export default function AsignacionesOperativasPage() {
     id_recintos: [],
     id_mesas: [],
     id_anforas: [],
+    id_franjas: [],
   });
 
   const cargar = async () => {
@@ -164,6 +165,16 @@ export default function AsignacionesOperativasPage() {
       )),
     ),
     [estructura, form.id_nodos, form.id_recintos, form.id_mesas, recintosPorId],
+  );
+  const franjasDisponibles = useMemo(
+    () => (procesoActivo?.papeletas || []).flatMap((papeleta) => (
+      (papeleta.franjas || []).map((franja) => ({
+        ...franja,
+        id: franja.id_franja,
+        nombre_papeleta: papeleta.nombre,
+      }))
+    )),
+    [procesoActivo?.papeletas],
   );
 
   const alternar = (campo, id) => {
@@ -274,6 +285,7 @@ export default function AsignacionesOperativasPage() {
         id_recintos: [],
         id_mesas: [],
         id_anforas: [],
+        id_franjas: [],
       }));
       await cargar();
     } catch (e) {
@@ -357,13 +369,23 @@ export default function AsignacionesOperativasPage() {
             <SelectorAmbito titulo="Mesas" items={mesasDisponibles} seleccionados={form.id_mesas} onAlternar={alternarMesa} testid="scope-mesas" etiqueta={(item) => `Mesa ${item.numero_mesa}`} />
             <SelectorAmbito titulo="Ánforas específicas" items={anforasDisponibles} seleccionados={form.id_anforas} onAlternar={(id) => alternar("id_anforas", id)} testid="scope-anforas" etiqueta={(item) => `${item.numero_anfora} · ${item.nombre}`} />
           </div>
-          <Button onClick={guardarAsignacion} disabled={!form.id_usuario} className="mt-5" data-testid="guardar-asignacion-operativa-button"><ShieldCheck className="w-4 h-4 mr-2" /> Guardar asignación</Button>
+          <div className="mt-5 max-w-2xl">
+            <SelectorAmbito
+              titulo="Franjas autorizadas"
+              items={franjasDisponibles}
+              seleccionados={form.id_franjas}
+              onAlternar={(id) => alternar("id_franjas", id)}
+              testid="scope-franjas"
+              etiqueta={(item) => `${item.nombre_papeleta} · ${item.titulo}`}
+            />
+          </div>
+          <Button onClick={guardarAsignacion} disabled={!form.id_usuario || form.id_franjas.length === 0} className="mt-5" data-testid="guardar-asignacion-operativa-button"><ShieldCheck className="w-4 h-4 mr-2" /> Guardar asignación</Button>
         </section>
       </div>
 
       <section className="mt-8 border border-slate-200 bg-white p-5" data-testid="lista-asignaciones-operativas">
         <div className="flex items-center gap-2"><Users className="w-5 h-5 text-[#1E3A8A]" /><h2 className="font-display text-lg font-bold">Asignaciones vigentes</h2></div>
-        <div className="mt-4 overflow-x-auto"><table className="min-w-full text-sm"><thead className="border-b border-slate-200 text-left text-[10px] font-data uppercase tracking-widest text-slate-500"><tr><th className="p-2">Usuario</th><th className="p-2">Función</th><th className="p-2">Ámbito</th><th className="p-2" /></tr></thead><tbody>{asignaciones.map((asignacion) => { const usuario = usuarios.find((item) => item.id === asignacion.id_usuario); const etiquetasFuncion = { carga: "Operador de carga", validacion: "Validador de actas", carga_validacion: "Operador de carga y validador de actas" }; return <tr key={asignacion.id} className="border-b border-slate-100"><td className="p-2"><div className="font-semibold">{usuario?.nombre_completo || "Usuario eliminado"}</div><div className="text-xs text-slate-500">{usuario?.email}</div></td><td className="p-2">{etiquetasFuncion[asignacion.funcion] || asignacion.funcion}</td><td className="p-2 text-xs text-slate-600">{asignacion.id_nodos.length} nodos · {asignacion.id_recintos.length} recintos · {(asignacion.id_mesas || []).length} mesas · {asignacion.id_anforas.length} ánforas</td><td className="p-2 text-right"><Button variant="outline" size="sm" onClick={() => eliminar(asignacion.id)} data-testid={`eliminar-asignacion-${asignacion.id}`}>Quitar</Button></td></tr>; })}</tbody></table></div>
+        <div className="mt-4 overflow-x-auto"><table className="min-w-full text-sm"><thead className="border-b border-slate-200 text-left text-[10px] font-data uppercase tracking-widest text-slate-500"><tr><th className="p-2">Usuario</th><th className="p-2">Función</th><th className="p-2">Franjas</th><th className="p-2">Ámbito</th><th className="p-2" /></tr></thead><tbody>{asignaciones.map((asignacion) => { const usuario = usuarios.find((item) => item.id === asignacion.id_usuario); const etiquetasFuncion = { carga: "Operador de carga", validacion: "Validador de actas", carga_validacion: "Operador de carga y validador de actas" }; const idsFranjas = asignacion.id_franjas || []; const etiquetasFranjas = idsFranjas.length ? idsFranjas.map((id) => franjasDisponibles.find((franja) => franja.id === id)?.titulo || "Franja").join(", ") : "Todas (asignación anterior)"; return <tr key={asignacion.id} className="border-b border-slate-100"><td className="p-2"><div className="font-semibold">{usuario?.nombre_completo || "Usuario eliminado"}</div><div className="text-xs text-slate-500">{usuario?.email}</div></td><td className="p-2">{etiquetasFuncion[asignacion.funcion] || asignacion.funcion}</td><td className="p-2 text-xs text-slate-600">{etiquetasFranjas}</td><td className="p-2 text-xs text-slate-600">{asignacion.id_nodos.length} nodos · {asignacion.id_recintos.length} recintos · {(asignacion.id_mesas || []).length} mesas · {asignacion.id_anforas.length} ánforas</td><td className="p-2 text-right"><Button variant="outline" size="sm" onClick={() => eliminar(asignacion.id)} data-testid={`eliminar-asignacion-${asignacion.id}`}>Quitar</Button></td></tr>; })}</tbody></table></div>
       </section>
     </div>
   );

@@ -362,8 +362,10 @@ export default function ReportesPage() {
             <div className="mt-3 flex flex-wrap gap-x-5 gap-y-1 text-xs text-slate-600">
               <span><strong className="text-slate-800">Filtros:</strong> {filtroIds}</span>
               <span><strong className="text-slate-800">Ánforas encontradas:</strong> {numero(reporte.filtros?.anforas_encontradas)}</span>
+              <span><strong className="text-slate-800">Actas esperadas:</strong> {numero(reporte.filtros?.actas_esperadas)}</span>
               <span><strong className="text-slate-800">Actas consolidadas:</strong> {numero(reporte.filtros?.actas_consolidadas)}</span>
-              <span><strong className="text-slate-800">Ánforas faltantes:</strong> {numero(reporte.filtros?.anforas_faltantes)}</span>
+              <span><strong className="text-slate-800">Actas faltantes:</strong> {numero(reporte.filtros?.actas_faltantes)}</span>
+              <span><strong className="text-slate-800">Ánforas sin acta:</strong> {numero(reporte.filtros?.anforas_faltantes)}</span>
             </div>
           </div>
 

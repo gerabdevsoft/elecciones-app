@@ -170,16 +170,16 @@ export default function ResultadosPage() {
         <aside className="border border-slate-200 bg-white p-4 sm:p-5" data-testid="actas-consolidadas-recientes">
           <div className="flex items-center gap-2"><BadgeCheck className="w-5 h-5 text-emerald-600" /><h2 className="font-display text-lg font-bold">Actas recién consolidadas</h2></div>
           <div className="mt-4 space-y-3">
-            {estado.actas_recientes.map((acta) => <div key={acta.id_acta} className="border-l-2 border-emerald-500 pl-3" data-testid={`acta-reciente-${acta.id_acta}`}><div className="font-data text-xs font-bold">Ánfora {acta.numero_anfora}</div><div className="mt-1 text-sm text-slate-700">{acta.recinto} · {acta.ambiente}</div>{acta.tipo_mesa && <div className="mt-1 text-[10px] font-data uppercase text-blue-700">Mesa {acta.tipo_mesa}</div>}<div className="mt-1 text-[10px] text-slate-400">{acta.actualizado_en}</div></div>)}
+            {estado.actas_recientes.map((acta) => <div key={`${acta.id_acta}-${acta.id_franja}`} className="border-l-2 border-emerald-500 pl-3" data-testid={`acta-reciente-${acta.id_acta}`}><div className="font-data text-xs font-bold">Ánfora {acta.numero_anfora}</div>{acta.franja && <div className="mt-1 text-xs font-semibold text-blue-700">{acta.franja}</div>}<div className="mt-1 text-sm text-slate-700">{acta.recinto} · {acta.ambiente}</div>{acta.tipo_mesa && <div className="mt-1 text-[10px] font-data uppercase text-blue-700">Mesa {acta.tipo_mesa}</div>}<div className="mt-1 text-[10px] text-slate-400">{acta.actualizado_en}</div></div>)}
             {estado.actas_recientes.length === 0 && <div className="text-sm text-slate-400">Aún no existen actas consolidadas.</div>}
           </div>
         </aside>
       </div>
 
       <section className="mt-8 grid grid-cols-1 gap-4 md:grid-cols-3" data-testid="metricas-escrutinio-anforas">
-        <Metrica titulo="Ánforas totales" cantidad={estado.anforas.total} porcentaje={estado.anforas.porcentaje_total} color="#1E3A8A" />
-        <Metrica titulo="Ánforas escrutadas" cantidad={estado.anforas.escrutadas} porcentaje={estado.anforas.porcentaje_escrutadas} color="#059669" />
-        <Metrica titulo="Ánforas faltantes" cantidad={estado.anforas.faltantes} porcentaje={estado.anforas.porcentaje_faltantes} color="#D97706" />
+        <Metrica titulo="Actas esperadas" cantidad={estado.actas.total} porcentaje="100" color="#1E3A8A" />
+        <Metrica titulo="Actas consolidadas" cantidad={estado.actas.escrutadas} porcentaje={estado.actas.porcentaje_escrutadas} color="#059669" />
+        <Metrica titulo="Actas faltantes" cantidad={estado.actas.faltantes} porcentaje={estado.actas.porcentaje_faltantes} color="#D97706" />
       </section>
     </div>
   );

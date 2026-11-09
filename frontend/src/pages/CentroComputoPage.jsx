@@ -58,6 +58,9 @@ export default function CentroComputoPage() {
   const [cargandoLocalizador, setCargandoLocalizador] = useState(true);
   const [errorLocalizador, setErrorLocalizador] = useState("");
   const [anforaSeleccionada, setAnforaSeleccionada] = useState(null);
+  const [idFranjaSeleccionada, setIdFranjaSeleccionada] = useState("");
+  const [actasAnfora, setActasAnfora] = useState([]);
+  const [idsFranjasAutorizadas, setIdsFranjasAutorizadas] = useState([]);
   const [actaActual, setActaActual] = useState(null);
   const [meta, setMeta] = useState({ departamento: "La Paz", ciudad: "La Paz", recinto: "", ambiente: "", numero_anfora: "" });
   const [urlImagen, setUrlImagen] = useState(null);
@@ -111,9 +114,23 @@ export default function CentroComputoPage() {
   const [motivoTextual, setMotivoTextual] = useState("");
   const [desbloqueando, setDesbloqueando] = useState(false);
 
-  const papeletasActivas = (procesoActivo?.papeletas || []).filter((papeleta) => (
-    anforaSeleccionada?.id_papeletas?.includes(papeleta.id_papeleta)
-  ));
+  const papeletasActivas = (procesoActivo?.papeletas || [])
+    .filter((papeleta) => anforaSeleccionada?.id_papeletas?.includes(papeleta.id_papeleta))
+    .map((papeleta) => ({
+      ...papeleta,
+      franjas: (papeleta.franjas || []).filter((franja) => franja.id_franja === idFranjaSeleccionada),
+    }))
+    .filter((papeleta) => papeleta.franjas.length > 0);
+  const franjasAnfora = (procesoActivo?.papeletas || [])
+    .filter((papeleta) => anforaSeleccionada?.id_papeletas?.includes(papeleta.id_papeleta))
+    .flatMap((papeleta) => (papeleta.franjas || []).map((franja) => ({
+      ...franja,
+      id_papeleta: papeleta.id_papeleta,
+      nombre_papeleta: papeleta.nombre,
+    })));
+  const franjasPermitidas = franjasAnfora.filter(
+    (franja) => idsFranjasAutorizadas.includes(franja.id_franja),
+  );
   useEffect(() => {
     if (imagenPendientePersistencia) return undefined;
     if (!urlImagen) {
@@ -151,19 +168,24 @@ export default function CentroComputoPage() {
     setImagenPendientePersistencia(false);
     setImagenSeguraBlob(null);
   };
-  const cargarPermisos = useCallback(async (idAnfora = null, idSolicitud = null) => {
-    if (!procesoActivo?.id_eleccion) return;
+  const cargarPermisos = useCallback(async (idAnfora = null, idSolicitud = null, idFranja = null) => {
+    if (!procesoActivo?.id_eleccion) return null;
     if (idAnfora) setCargandoPermisosAnfora(true);
     try {
-      const parametroAnfora = idAnfora ? `?id_anfora=${encodeURIComponent(idAnfora)}` : "";
+      const parametros = new URLSearchParams();
+      if (idAnfora) parametros.set("id_anfora", idAnfora);
+      if (idFranja) parametros.set("id_franja", idFranja);
+      const query = parametros.size ? `?${parametros.toString()}` : "";
       const { data } = await api.get(
-        `/operacion/procesos/${procesoActivo.id_eleccion}/permisos${parametroAnfora}`,
+        `/operacion/procesos/${procesoActivo.id_eleccion}/permisos${query}`,
       );
       if (idSolicitud !== null && solicitudAnforaRef.current !== idSolicitud) return;
       setPermisos(data);
+      return data;
     } catch (e) {
       if (idSolicitud !== null && solicitudAnforaRef.current !== idSolicitud) return;
       setPermisos({ puede_cargar: false, puede_validar: false, es_admin: false });
+      return null;
     } finally {
       if (idSolicitud !== null && solicitudAnforaRef.current === idSolicitud) {
         setCargandoPermisosAnfora(false);
@@ -206,6 +228,9 @@ export default function CentroComputoPage() {
     if (!procesoActivo?.id_eleccion) return;
     setConteos({});
     setAnforaSeleccionada(null);
+    setActasAnfora([]);
+    setIdFranjaSeleccionada("");
+    setIdsFranjasAutorizadas([]);
     setActaActual(null);
     setLocalizador(null);
     setErrorLocalizador("");
@@ -217,36 +242,48 @@ export default function CentroComputoPage() {
   const seleccionarAnfora = async (anfora) => {
     const idSolicitud = solicitudAnforaRef.current + 1;
     solicitudAnforaRef.current = idSolicitud;
-    setPermisos((anteriores) => anteriores
-      ? { ...anteriores, puede_autovalidar: false }
-      : anteriores);
-    cargarPermisos(anfora.id, idSolicitud);
+    setPermisos({ puede_cargar: false, puede_validar: false, puede_autovalidar: false, es_admin: false });
     setAnforaSeleccionada(anfora);
     setActaActual(null);
+    setActasAnfora([]);
+    setIdFranjaSeleccionada("");
     setCargandoActa(true);
     setUrlImagen(null); setRutaStorage(null);
     setMeta({ departamento: "", ciudad: "", recinto: "", ambiente: "", numero_anfora: anfora.numero_anfora });
-    setConteos(conteosIniciales(procesoActivo, (procesoActivo.papeletas || []).filter((papeleta) => anfora.id_papeletas?.includes(papeleta.id_papeleta))));
+    setConteos({});
     setZoom(1); setRotacion(0);
     try {
-      const { data } = await api.get(
-        `/actas?id_eleccion=${procesoActivo.id_eleccion}&id_anfora=${anfora.id}`,
-      );
-      const existente = [...data].sort((primera, segunda) => {
-        const puntaje = (acta) => [
-          Number(Boolean(acta.conteos?.length)),
-          Number(Boolean(acta.esta_bloqueada)),
-          acta.actualizado_en || "",
-        ];
-        const [conteosA, bloqueadaA, fechaA] = puntaje(primera);
-        const [conteosB, bloqueadaB, fechaB] = puntaje(segunda);
-        if (conteosB !== conteosA) return conteosB - conteosA;
-        if (bloqueadaB !== bloqueadaA) return bloqueadaB - bloqueadaA;
-        return fechaB.localeCompare(fechaA);
-      })[0];
+      const [permisosAnfora, respuestaActas] = await Promise.all([
+        cargarPermisos(anfora.id, idSolicitud),
+        api.get(`/actas?id_eleccion=${procesoActivo.id_eleccion}&id_anfora=${anfora.id}`),
+      ]);
       if (solicitudAnforaRef.current !== idSolicitud) return;
-      if (existente) cargarActa(existente, anfora);
-      else setActaActual(null);
+      const idsFranjasAnfora = (procesoActivo.papeletas || [])
+        .filter((papeleta) => anfora.id_papeletas?.includes(papeleta.id_papeleta))
+        .flatMap((papeleta) => (papeleta.franjas || []).map((franja) => franja.id_franja));
+      const idsFranjasPermitidas = permisosAnfora?.es_admin
+        ? idsFranjasAnfora
+        : idsFranjasAnfora.filter((id) => permisosAnfora?.franjas_permitidas?.includes(id));
+      setIdsFranjasAutorizadas(idsFranjasPermitidas);
+      const actas = respuestaActas.data || [];
+      setActasAnfora(actas);
+      const idPrimeraFranja = actas.find((acta) => idsFranjasPermitidas.includes(acta.id_franja))?.id_franja
+        || idsFranjasPermitidas[0]
+        || "";
+      setIdFranjaSeleccionada(idPrimeraFranja);
+      if (idPrimeraFranja) {
+        await cargarPermisos(anfora.id, idSolicitud, idPrimeraFranja);
+        const existente = actas.find((acta) => acta.id_franja === idPrimeraFranja);
+        if (existente) cargarActa(existente, anfora, idPrimeraFranja);
+        else {
+          const papeletas = (procesoActivo.papeletas || []).filter((p) => anfora.id_papeletas?.includes(p.id_papeleta));
+          const iniciales = conteosIniciales(procesoActivo, papeletas);
+          setConteos({ [idPrimeraFranja]: iniciales[idPrimeraFranja] });
+        }
+      } else {
+        setPermisos(permisosAnfora);
+        setActaActual(null);
+      }
       setCargandoActa(false);
     } catch (e) {
       if (solicitudAnforaRef.current !== idSolicitud) return;
@@ -262,6 +299,9 @@ export default function CentroComputoPage() {
     limpiarVistaPreviaLocal();
     setAnforaSeleccionada(null);
     setActaActual(null);
+    setActasAnfora([]);
+    setIdFranjaSeleccionada("");
+    setIdsFranjasAutorizadas([]);
     setUrlImagen(null);
     setRutaStorage(null);
     setConteos({});
@@ -271,7 +311,7 @@ export default function CentroComputoPage() {
     setCargandoActa(false);
   };
 
-  const cargarActa = (a, anfora = anforaSeleccionada) => {
+  const cargarActa = (a, anfora = anforaSeleccionada, idFranja = idFranjaSeleccionada) => {
     limpiarVistaPreviaLocal();
     setActaActual(a);
     setUrlImagen(a.url_imagen);
@@ -284,7 +324,7 @@ export default function CentroComputoPage() {
       anfora?.id_papeletas?.includes(papeleta.id_papeleta)
     ));
     const c = conteosIniciales(procesoActivo, papeletas);
-    (a.conteos || []).forEach((ex) => {
+    (a.conteos || []).filter((ex) => ex.id_franja === idFranja).forEach((ex) => {
       if (c[ex.id_franja]) {
         c[ex.id_franja] = {
           votos_por_candidato: { ...c[ex.id_franja].votos_por_candidato, ...(ex.votos_por_candidato || {}) },
@@ -297,10 +337,37 @@ export default function CentroComputoPage() {
     setZoom(1); setRotacion(0);
   };
 
+  const seleccionarFranja = async (idFranja) => {
+    if (!idFranja || !anforaSeleccionada) return;
+    limpiarVistaPreviaLocal();
+    setIdFranjaSeleccionada(idFranja);
+    setCargandoActa(true);
+    setActaActual(null);
+    setUrlImagen(null);
+    setRutaStorage(null);
+    setConteos({});
+    try {
+      await cargarPermisos(anforaSeleccionada.id, solicitudAnforaRef.current, idFranja);
+      const existente = actasAnfora.find((acta) => acta.id_franja === idFranja);
+      if (existente) cargarActa(existente, anforaSeleccionada, idFranja);
+      else {
+        const papeletas = (procesoActivo.papeletas || []).filter((p) => anforaSeleccionada.id_papeletas?.includes(p.id_papeleta));
+        const iniciales = conteosIniciales(procesoActivo, papeletas);
+        setConteos({ [idFranja]: iniciales[idFranja] });
+      }
+    } finally {
+      setCargandoActa(false);
+    }
+  };
+
   const subirArchivo = async (archivo) => {
     if (!archivo) return;
     if (!anforaSeleccionada) {
       toast.warning("Seleccione un ánfora antes de cargar un acta.");
+      return;
+    }
+    if (!idFranjaSeleccionada) {
+      toast.warning("Seleccione una franja antes de cargar el acta.");
       return;
     }
     try {
@@ -310,6 +377,7 @@ export default function CentroComputoPage() {
       const fd = new FormData();
       fd.append("id_eleccion", procesoActivo.id_eleccion);
       fd.append("id_anfora", anforaSeleccionada.id);
+      fd.append("id_franja", idFranjaSeleccionada);
       fd.append("archivo", comprimida);
       const { data } = await api.post("/subir-imagen-acta", fd, { headers: { "Content-Type": "multipart/form-data" } });
       if (imagenPreviaLocalRef.current) {
@@ -333,11 +401,18 @@ export default function CentroComputoPage() {
         id_eleccion: procesoActivo.id_eleccion,
         ...meta,
         id_anfora: anforaSeleccionada?.id,
+        id_franja: idFranjaSeleccionada,
         url_imagen: urlImagen, ruta_storage: rutaStorage,
-        conteos: Object.entries(conteos).map(([id_franja, c]) => ({ id_franja, ...c })),
+        conteos: idFranjaSeleccionada && conteos[idFranjaSeleccionada]
+          ? [{ id_franja: idFranjaSeleccionada, ...conteos[idFranjaSeleccionada] }]
+          : [],
       };
       const { data } = await api.post("/guardar-acta", payload);
       setActaActual(data);
+      setActasAnfora((anteriores) => [
+        ...anteriores.filter((acta) => acta.id !== data.id),
+        data,
+      ]);
       toast.success("Acta guardada (borrador).");
     } catch (e) {
       toast.error(formatearError(e?.response?.data?.detail) || "Error al guardar");
@@ -359,6 +434,10 @@ export default function CentroComputoPage() {
       setModalConsolidacion(false);
       const { data } = await api.get(`/actas/${actaActual.id}`);
       setActaActual(data);
+      setActasAnfora((anteriores) => [
+        ...anteriores.filter((acta) => acta.id !== data.id),
+        data,
+      ]);
     } catch (e) {
       toast.error(formatearError(e?.response?.data?.detail));
     } finally {
@@ -596,8 +675,26 @@ export default function CentroComputoPage() {
             )}
           </div>
 
+          <div className="mb-5 max-w-xl" data-testid="selector-franja-operativa">
+            <Label className="text-[10px] font-data uppercase tracking-widest text-slate-500">Franja asignada</Label>
+            {franjasPermitidas.length ? (
+              <Select value={idFranjaSeleccionada} onValueChange={seleccionarFranja} disabled={cargandoActa}>
+                <SelectTrigger className="mt-1" data-testid="seleccionar-franja-operativa"><SelectValue placeholder="Seleccione una franja" /></SelectTrigger>
+                <SelectContent>
+                  {franjasPermitidas.map((franja) => (
+                    <SelectItem key={franja.id_franja} value={franja.id_franja}>
+                      {franja.nombre_papeleta} · {franja.titulo}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            ) : (
+              <p className="mt-2 text-sm text-amber-800">No tiene franjas asignadas para esta ánfora.</p>
+            )}
+          </div>
+
           {/* Boletas → Franjas (recuento independiente por franja) */}
-          <Tabs defaultValue={papeletasActivas[0]?.id_papeleta}>
+          {papeletasActivas.length ? <Tabs key={idFranjaSeleccionada} defaultValue={papeletasActivas[0]?.id_papeleta}>
             <TabsList className="w-full flex-wrap h-auto" data-testid="tabs-papeletas">
               {papeletasActivas.map((p) => (
                 <TabsTrigger key={p.id_papeleta} value={p.id_papeleta} className="text-xs">{p.nombre}</TabsTrigger>
@@ -686,7 +783,7 @@ export default function CentroComputoPage() {
                 )}
               </TabsContent>
             ))}
-          </Tabs>
+          </Tabs> : null}
 
           {bloquearGuardadoPorVotantes && cantidadVotantesHabilitados != null && (
             <div className="mt-4 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-800" data-testid="error-limite-votantes">

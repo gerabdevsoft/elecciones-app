@@ -65,13 +65,14 @@ api = APIRouter(prefix="/api")
 
 # La caché es breve y cada aviso de consolidación la invalida de inmediato.
 _RESULTADOS_PUBLICOS_TTL_SEGUNDOS = 10
-_resultados_publicos_cache: dict[str, tuple[float, dict]] = {}
+_resultados_publicos_cache: dict[tuple[str, str, str], tuple[float, dict]] = {}
 _resultados_publicos_versiones: dict[str, int] = {}
-_resultados_publicos_locks: dict[str, asyncio.Lock] = {}
+_resultados_publicos_locks: dict[tuple[str, str, str], asyncio.Lock] = {}
 
 
 def _invalidar_cache_resultados_publicos(id_eleccion: str) -> None:
-    _resultados_publicos_cache.pop(id_eleccion, None)
+    for clave in [clave for clave in _resultados_publicos_cache if clave[0] == id_eleccion]:
+        _resultados_publicos_cache.pop(clave, None)
     _resultados_publicos_versiones[id_eleccion] = (
         _resultados_publicos_versiones.get(id_eleccion, 0) + 1
     )
@@ -536,6 +537,7 @@ class Acta(BaseModel):
     ambiente: str
     numero_anfora: str
     id_anfora: Optional[str] = None
+    id_franja: Optional[str] = None
     id_mesa: Optional[str] = None
     id_recinto: Optional[str] = None
     tipo_mesa: Optional[Literal["docente", "estudiante"]] = None
@@ -564,6 +566,7 @@ class GuardarActaReq(BaseModel):
     ambiente: str
     numero_anfora: str
     id_anfora: Optional[str] = None
+    id_franja: Optional[str] = None
     url_imagen: Optional[str] = None
     ruta_storage: Optional[str] = None
     conteos: List[ConteoFranja] = []
@@ -687,6 +690,7 @@ class AsignacionOperativaReq(BaseModel):
     id_recintos: List[str] = Field(default_factory=list)
     id_mesas: List[str] = Field(default_factory=list)
     id_anforas: List[str] = Field(default_factory=list)
+    id_franjas: List[str] = Field(default_factory=list)
 
 # ------------- Endpoints Auth -------------
 @api.post("/auth/login")
@@ -814,12 +818,75 @@ def _filtro_anforas_asignadas(asignaciones: List[dict]) -> dict:
     return {"$or": condiciones} if condiciones else {"id": {"$in": []}}
 
 
+def _mapa_franjas_proceso(proceso: Optional[dict]) -> dict:
+    mapa = {}
+    for papeleta in (proceso or {}).get("papeletas", []):
+        for franja in papeleta.get("franjas", []):
+            mapa[franja.get("id_franja")] = (papeleta, franja)
+    return {id_franja: valor for id_franja, valor in mapa.items() if id_franja}
+
+
+def _id_franja_acta(acta: dict, proceso: Optional[dict]) -> Optional[str]:
+    """Resuelve actas antiguas como una sola franja sin modificar sus documentos."""
+    mapa = _mapa_franjas_proceso(proceso)
+    id_franja = acta.get("id_franja")
+    if id_franja in mapa:
+        return id_franja
+    ids_conteos = list(dict.fromkeys(
+        conteo.get("id_franja")
+        for conteo in acta.get("conteos", [])
+        if conteo.get("id_franja") in mapa
+    ))
+    ids_vicerrectorado = [
+        id_item
+        for id_item, (_, franja) in mapa.items()
+        if "vicerrector" in str(franja.get("titulo", "")).casefold()
+    ]
+    coincidencias = [id_item for id_item in ids_vicerrectorado if id_item in ids_conteos]
+    if len(coincidencias) == 1:
+        return coincidencias[0]
+    if len(ids_conteos) == 1:
+        return ids_conteos[0]
+    if not ids_conteos and len(ids_vicerrectorado) == 1:
+        return ids_vicerrectorado[0]
+    return None
+
+
+def _actas_por_franja(actas: List[dict], proceso: Optional[dict]) -> List[dict]:
+    """Devuelve una fila por acta/franja; mantiene intacto el formato guardado."""
+    mapa = _mapa_franjas_proceso(proceso)
+    salida = []
+    for acta in actas:
+        id_franja = _id_franja_acta(acta, proceso)
+        if id_franja:
+            copia = dict(acta)
+            copia["id_franja"] = id_franja
+            copia["conteos"] = [
+                conteo for conteo in acta.get("conteos", [])
+                if conteo.get("id_franja") == id_franja
+            ]
+            salida.append(copia)
+            continue
+        # Para elecciones antiguas sin franja identificable, conserva cada conteo
+        # como fila independiente en vez de descartar votos de otras franjas.
+        for conteo in acta.get("conteos", []):
+            id_item = conteo.get("id_franja")
+            if id_item not in mapa:
+                continue
+            copia = dict(acta)
+            copia["id_franja"] = id_item
+            copia["conteos"] = [conteo]
+            salida.append(copia)
+    return salida
+
+
 async def _autorizar_anfora_operativa(
     usuario: dict,
     id_eleccion: str,
     id_anfora: str,
     accion: str,
     acta: Optional[dict] = None,
+    id_franja: Optional[str] = None,
 ) -> dict:
     anfora = await db.anforas_mesa.find_one(
         {"id": id_anfora, "id_eleccion": id_eleccion},
@@ -827,13 +894,38 @@ async def _autorizar_anfora_operativa(
     )
     if not anfora:
         raise HTTPException(404, "Ánfora no encontrada")
+    if not id_franja and acta:
+        proceso = await db.procesos_electorales.find_one(
+            {"id_eleccion": id_eleccion},
+            {"_id": 0, "papeletas": 1},
+        )
+        id_franja = _id_franja_acta(acta, proceso)
+    if id_franja:
+        proceso = await db.procesos_electorales.find_one(
+            {"id_eleccion": id_eleccion},
+            {"_id": 0, "papeletas": 1},
+        )
+        ids_franjas_anfora = {
+            franja.get("id_franja")
+            for papeleta in (proceso or {}).get("papeletas", [])
+            if papeleta.get("id_papeleta") in (anfora.get("id_papeletas") or [])
+            for franja in papeleta.get("franjas", [])
+        }
+        if id_franja not in ids_franjas_anfora:
+            raise HTTPException(400, "La franja no pertenece a las papeletas de esta ánfora")
     if usuario.get("rol") == "admin":
         return anfora
-    funcion = "carga" if accion == "enviar" else "validacion"
     if accion == "guardar":
         asignaciones = await _asignaciones_operativas_usuario(usuario["id"], id_eleccion)
+    elif accion in {"enviar", "cargar"}:
+        asignaciones = await _asignaciones_operativas_usuario(usuario["id"], id_eleccion, "carga")
     else:
-        asignaciones = await _asignaciones_operativas_usuario(usuario["id"], id_eleccion, funcion)
+        asignaciones = await _asignaciones_operativas_usuario(usuario["id"], id_eleccion, "validacion")
+    if id_franja:
+        asignaciones = [
+            asignacion for asignacion in asignaciones
+            if not asignacion.get("id_franjas") or id_franja in asignacion["id_franjas"]
+        ]
     filtro = _filtro_anforas_asignadas(asignaciones)
     autorizada = await db.anforas_mesa.find_one(
         {"id": id_anfora, "id_eleccion": id_eleccion, **filtro},
@@ -849,6 +941,11 @@ async def _autorizar_anfora_operativa(
                 id_eleccion,
                 "carga_validacion",
             )
+            if id_franja:
+                asignaciones_combinadas = [
+                    asignacion for asignacion in asignaciones_combinadas
+                    if not asignacion.get("id_franjas") or id_franja in asignacion["id_franjas"]
+                ]
             filtro_combinado = _filtro_anforas_asignadas(asignaciones_combinadas)
             puede_validar_su_acta = await db.anforas_mesa.find_one(
                 {"id": id_anfora, "id_eleccion": id_eleccion, **filtro_combinado},
@@ -864,13 +961,34 @@ async def _permisos_operativos(
     usuario: dict,
     id_eleccion: str,
     id_anfora: Optional[str] = None,
+    id_franja: Optional[str] = None,
 ) -> dict:
+    proceso = await db.procesos_electorales.find_one(
+        {"id_eleccion": id_eleccion},
+        {"_id": 0, "papeletas": 1},
+    )
+    todos_los_ids_franja = set(_mapa_franjas_proceso(proceso))
+    anfora = None
+    ids_franjas_anfora = todos_los_ids_franja
+    if id_anfora:
+        anfora = await db.anforas_mesa.find_one(
+            {"id": id_anfora, "id_eleccion": id_eleccion},
+            {"_id": 0, "id_papeletas": 1},
+        )
+        ids_papeletas = set((anfora or {}).get("id_papeletas") or [])
+        ids_franjas_anfora = {
+            franja.get("id_franja")
+            for papeleta in (proceso or {}).get("papeletas", [])
+            if papeleta.get("id_papeleta") in ids_papeletas
+            for franja in papeleta.get("franjas", [])
+        }
     if usuario.get("rol") == "admin":
         return {
             "puede_cargar": True,
             "puede_validar": True,
             "puede_autovalidar": True,
             "es_admin": True,
+            "franjas_permitidas": sorted(ids_franjas_anfora),
         }
     carga = await _asignaciones_operativas_usuario(usuario["id"], id_eleccion, "carga")
     validacion = await _asignaciones_operativas_usuario(usuario["id"], id_eleccion, "validacion")
@@ -880,6 +998,41 @@ async def _permisos_operativos(
         "carga_validacion",
     )
     filtro_combinado = _filtro_anforas_asignadas(combinada)
+    if id_franja:
+        carga = [
+            asignacion for asignacion in carga
+            if not asignacion.get("id_franjas") or id_franja in asignacion["id_franjas"]
+        ]
+        validacion = [
+            asignacion for asignacion in validacion
+            if not asignacion.get("id_franjas") or id_franja in asignacion["id_franjas"]
+        ]
+        combinada = [
+            asignacion for asignacion in combinada
+            if not asignacion.get("id_franjas") or id_franja in asignacion["id_franjas"]
+        ]
+        filtro_combinado = _filtro_anforas_asignadas(combinada)
+    async def franjas_para(asignaciones):
+        autorizadas = set()
+        for asignacion in asignaciones:
+            if id_anfora:
+                dentro_del_ambito = await db.anforas_mesa.find_one(
+                    {
+                        "id": id_anfora,
+                        "id_eleccion": id_eleccion,
+                        **_filtro_anforas_asignadas([asignacion]),
+                    },
+                    {"_id": 1},
+                )
+                if not dentro_del_ambito:
+                    continue
+            ids = set(asignacion.get("id_franjas") or []) or todos_los_ids_franja
+            autorizadas.update(ids & ids_franjas_anfora)
+        return autorizadas
+
+    franjas_carga = await franjas_para(carga)
+    franjas_validacion = await franjas_para(validacion)
+    franjas_combinada = await franjas_para(combinada)
     if id_anfora:
         puede_autovalidar = bool(await db.anforas_mesa.find_one(
             {"id": id_anfora, "id_eleccion": id_eleccion, **filtro_combinado},
@@ -888,10 +1041,11 @@ async def _permisos_operativos(
     else:
         puede_autovalidar = bool(filtro_combinado.get("$or"))
     return {
-        "puede_cargar": bool(_filtro_anforas_asignadas(carga).get("$or")),
-        "puede_validar": bool(_filtro_anforas_asignadas(validacion).get("$or")),
-        "puede_autovalidar": puede_autovalidar,
+        "puede_cargar": bool(franjas_carga),
+        "puede_validar": bool(franjas_validacion),
+        "puede_autovalidar": bool(franjas_combinada) if id_franja else puede_autovalidar,
         "es_admin": False,
+        "franjas_permitidas": sorted(franjas_carga | franjas_validacion | franjas_combinada),
     }
 
 
@@ -937,7 +1091,17 @@ async def _validar_conteos_acta_guardados(acta: dict) -> None:
     )
     if not anfora:
         raise HTTPException(409, "No se encontró el ánfora asociada al acta")
-    _validar_totales_conteos(acta.get("conteos") or [], anfora.get("cantidad_votantes"))
+    id_franja = acta.get("id_franja")
+    if not id_franja:
+        proceso = await db.procesos_electorales.find_one(
+            {"id_eleccion": acta.get("id_eleccion")},
+            {"_id": 0, "papeletas": 1},
+        )
+        id_franja = _id_franja_acta(acta, proceso)
+    conteos = acta.get("conteos") or []
+    if id_franja:
+        conteos = [conteo for conteo in conteos if conteo.get("id_franja") == id_franja]
+    _validar_totales_conteos(conteos, anfora.get("cantidad_votantes"))
 
 
 async def _obtener_contexto_anfora(id_eleccion: str, id_anfora: Optional[str]) -> dict:
@@ -979,6 +1143,28 @@ async def guardar_acta(req: GuardarActaReq, usuario: dict = Depends(usuario_actu
     ahora = datetime.now(timezone.utc).isoformat()
     if not req.id_anfora:
         raise HTTPException(400, "Debe seleccionar un ánfora")
+    proceso = await db.procesos_electorales.find_one(
+        {"id_eleccion": req.id_eleccion},
+        {"_id": 0, "papeletas": 1},
+    )
+    anfora = await db.anforas_mesa.find_one(
+        {"id_eleccion": req.id_eleccion, "id": req.id_anfora},
+        {"_id": 0, "id_papeletas": 1},
+    )
+    if not anfora:
+        raise HTTPException(404, "Ánfora no encontrada")
+    ids_franjas_validas = {
+        franja.get("id_franja")
+        for papeleta in (proceso or {}).get("papeletas", [])
+        if papeleta.get("id_papeleta") in (anfora.get("id_papeletas") or [])
+        for franja in papeleta.get("franjas", [])
+    }
+    ids_franjas_req = list(dict.fromkeys(conteo.id_franja for conteo in req.conteos))
+    id_franja = req.id_franja or (ids_franjas_req[0] if len(ids_franjas_req) == 1 else None)
+    if not id_franja or id_franja not in ids_franjas_validas:
+        raise HTTPException(400, "Seleccione una sola franja perteneciente a esta ánfora")
+    if len(ids_franjas_req) != 1 or ids_franjas_req[0] != id_franja:
+        raise HTTPException(400, "Cada acta debe guardar los votos de una sola franja")
     contexto_anfora = await _obtener_contexto_anfora(req.id_eleccion, req.id_anfora)
     _validar_totales_conteos(req.conteos, contexto_anfora.get("cantidad_votantes"))
     if req.id_acta:
@@ -987,16 +1173,30 @@ async def guardar_acta(req: GuardarActaReq, usuario: dict = Depends(usuario_actu
         )
         if not existente:
             raise HTTPException(404, "Acta no encontrada")
+        if existente.get("id_anfora") != req.id_anfora:
+            raise HTTPException(409, "El acta no pertenece al ánfora seleccionada")
+        id_franja_existente = _id_franja_acta(existente, proceso)
+        if id_franja_existente != id_franja:
+            raise HTTPException(409, "El acta existente corresponde a otra franja")
         await _autorizar_anfora_operativa(
             usuario,
             req.id_eleccion,
             req.id_anfora,
             "guardar",
             existente,
+            id_franja,
         )
         if existente.get("esta_bloqueada"):
             raise HTTPException(423, "Acta bloqueada — se requiere desbloqueo administrativo")
-        permisos = await _permisos_operativos(usuario, req.id_eleccion)
+        permisos = await _permisos_operativos(
+            usuario,
+            req.id_eleccion,
+            req.id_anfora,
+            id_franja,
+        )
+        franjas_permitidas = set(permisos.get("franjas_permitidas") or [])
+        if usuario.get("rol") != "admin" and id_franja not in franjas_permitidas:
+            raise HTTPException(403, "No tiene permiso para esta franja")
         estado = existente.get("estado", "borrador")
         es_validador = permisos["puede_validar"] or permisos["es_admin"]
         es_creador = usuario["id"] in {existente.get("id_creador"), existente.get("id_operador")}
@@ -1004,8 +1204,24 @@ async def guardar_acta(req: GuardarActaReq, usuario: dict = Depends(usuario_actu
             raise HTTPException(403, "Solo el operador creador puede editar este borrador")
         if not es_validador and estado not in {"borrador", "observado"}:
             raise HTTPException(403, "El operador no puede editar un acta enviada a validación")
+        conteo_nuevo = req.conteos[0].model_dump()
+        conteos_guardados = existente.get("conteos") or []
+        if existente.get("id_franja") is None:
+            # Conserva los conteos heredados de otras franjas; solo reemplaza el elegido.
+            conteos_actualizados = [
+                conteo for conteo in conteos_guardados
+                if conteo.get("id_franja") != id_franja
+            ]
+            conteos_actualizados.append(conteo_nuevo)
+        else:
+            conteos_actualizados = [
+                conteo for conteo in conteos_guardados
+                if conteo.get("id_franja") != id_franja
+            ]
+            conteos_actualizados.append(conteo_nuevo)
         update = {
-            "conteos": [c.model_dump() for c in req.conteos],
+            "id_franja": id_franja,
+            "conteos": conteos_actualizados,
             "departamento": contexto_anfora.get("departamento", req.departamento),
             "ciudad": contexto_anfora.get("ciudad", req.ciudad),
             "recinto": contexto_anfora.get("recinto", req.recinto),
@@ -1031,14 +1247,30 @@ async def guardar_acta(req: GuardarActaReq, usuario: dict = Depends(usuario_actu
         req.id_eleccion,
         req.id_anfora,
         "guardar",
+        id_franja=id_franja,
     )
-    existente_anfora = await db.actas.find_one(
+    permisos = await _permisos_operativos(
+        usuario,
+        req.id_eleccion,
+        req.id_anfora,
+        id_franja,
+    )
+    if usuario.get("rol") != "admin" and not permisos.get("puede_cargar"):
+        raise HTTPException(403, "Solo un usuario con permiso de carga puede crear un acta")
+    existentes_anfora = await db.actas.find(
         {"id_eleccion": req.id_eleccion, "id_anfora": req.id_anfora},
-        {"_id": 0, "id": 1, "esta_bloqueada": 1},
+        {"_id": 0},
+    ).to_list(100)
+    existente_anfora = next(
+        (
+            acta for acta in _actas_por_franja(existentes_anfora, proceso)
+            if acta.get("id_franja") == id_franja
+        ),
+        None,
     )
     if existente_anfora:
         estado_anfora = "bloqueada" if existente_anfora.get("esta_bloqueada") else "en borrador"
-        raise HTTPException(409, f"Ya existe un acta {estado_anfora} para esta ánfora")
+        raise HTTPException(409, f"Ya existe un acta {estado_anfora} para esta ánfora y franja")
     a = Acta(
         id_eleccion=req.id_eleccion,
         departamento=contexto_anfora.get("departamento", req.departamento),
@@ -1047,6 +1279,7 @@ async def guardar_acta(req: GuardarActaReq, usuario: dict = Depends(usuario_actu
         ambiente=contexto_anfora.get("ambiente", req.ambiente),
         numero_anfora=contexto_anfora.get("numero_anfora", req.numero_anfora),
         id_anfora=contexto_anfora.get("id_anfora"),
+        id_franja=id_franja,
         id_mesa=contexto_anfora.get("id_mesa"),
         id_recinto=contexto_anfora.get("id_recinto"),
         tipo_mesa=contexto_anfora.get("tipo_mesa"),
@@ -1083,12 +1316,14 @@ async def listar_actas(
             ]
         elecciones = list({asignacion["id_eleccion"] for asignacion in asignaciones})
         anforas_permitidas = []
+        asignaciones_por_eleccion = {}
         for eleccion in elecciones:
             asignaciones_eleccion = [
                 asignacion
                 for asignacion in asignaciones
                 if asignacion["id_eleccion"] == eleccion
             ]
+            asignaciones_por_eleccion[eleccion] = asignaciones_eleccion
             filtro = _filtro_anforas_asignadas(asignaciones_eleccion)
             anforas = await db.anforas_mesa.find(
                 {"id_eleccion": eleccion, **filtro},
@@ -1105,6 +1340,59 @@ async def listar_actas(
                 raise HTTPException(404, "Ánfora no disponible para su asignación")
         q["id_anfora"] = id_anfora
     actas = await db.actas.find(q, {"_id": 0}).sort("actualizado_en", -1).to_list(20000)
+    if usuario.get("rol") != "admin":
+        procesos = {
+            eleccion: await db.procesos_electorales.find_one(
+                {"id_eleccion": eleccion},
+                {"_id": 0, "papeletas": 1},
+            )
+            for eleccion in elecciones
+        }
+        filtradas = []
+        for acta in actas:
+            proceso = procesos.get(acta.get("id_eleccion"))
+            id_franja = _id_franja_acta(acta, proceso)
+            asignaciones_eleccion = asignaciones_por_eleccion.get(acta.get("id_eleccion"), [])
+            tiene_permiso = False
+            for asignacion in asignaciones_eleccion:
+                if asignacion.get("id_franjas") and id_franja not in asignacion["id_franjas"]:
+                    continue
+                en_ambito = await db.anforas_mesa.find_one(
+                    {
+                        "id": acta.get("id_anfora"),
+                        "id_eleccion": acta.get("id_eleccion"),
+                        **_filtro_anforas_asignadas([asignacion]),
+                    },
+                    {"_id": 1},
+                )
+                if en_ambito:
+                    tiene_permiso = True
+                    break
+            if tiene_permiso:
+                acta["id_franja"] = id_franja
+                acta["conteos"] = [
+                    conteo for conteo in acta.get("conteos", [])
+                    if conteo.get("id_franja") == id_franja
+                ]
+                filtradas.append(acta)
+        actas = filtradas
+    else:
+        elecciones_admin = list({acta.get("id_eleccion") for acta in actas if acta.get("id_eleccion")})
+        procesos = {
+            eleccion: await db.procesos_electorales.find_one(
+                {"id_eleccion": eleccion},
+                {"_id": 0, "papeletas": 1},
+            )
+            for eleccion in elecciones_admin
+        }
+        for acta in actas:
+            id_franja = _id_franja_acta(acta, procesos.get(acta.get("id_eleccion")))
+            if id_franja:
+                acta["id_franja"] = id_franja
+                acta["conteos"] = [
+                    conteo for conteo in acta.get("conteos", [])
+                    if conteo.get("id_franja") == id_franja
+                ]
     return actas
 
 @api.get("/actas/{id_acta}")
@@ -1120,6 +1408,17 @@ async def obtener_acta(id_acta: str, usuario: dict = Depends(usuario_actual)):
             "guardar",
             a,
         )
+    proceso = await db.procesos_electorales.find_one(
+        {"id_eleccion": a.get("id_eleccion")},
+        {"_id": 0, "papeletas": 1},
+    )
+    id_franja = _id_franja_acta(a, proceso)
+    if id_franja:
+        a["id_franja"] = id_franja
+        a["conteos"] = [
+            conteo for conteo in a.get("conteos", [])
+            if conteo.get("id_franja") == id_franja
+        ]
     return a
 
 @api.post("/centro-computo/bloquear")
@@ -1226,9 +1525,10 @@ async def observar_acta(req: ObservarActaReq, usuario: dict = Depends(usuario_ac
 async def permisos_operacion(
     id_eleccion: str,
     id_anfora: Optional[str] = None,
+    id_franja: Optional[str] = None,
     usuario: dict = Depends(usuario_actual),
 ):
-    return await _permisos_operativos(usuario, id_eleccion, id_anfora)
+    return await _permisos_operativos(usuario, id_eleccion, id_anfora, id_franja)
 
 
 @api.get("/operacion/procesos/{id_eleccion}/actas-pendientes-validacion")
@@ -1284,6 +1584,8 @@ async def listar_actas_pendientes_validacion(
         "id": 1,
         "id_eleccion": 1,
         "id_anfora": 1,
+        "id_franja": 1,
+        "conteos": 1,
         "id_mesa": 1,
         "id_recinto": 1,
         "tipo_mesa": 1,
@@ -1298,16 +1600,35 @@ async def listar_actas_pendientes_validacion(
         "observacion_validacion": 1,
     }
     actas = await db.actas.find(filtro_actas, campos).to_list(20000)
+    proceso = await db.procesos_electorales.find_one(
+        {"id_eleccion": id_eleccion},
+        {"_id": 0, "papeletas": 1},
+    )
     if usuario.get("rol") != "admin":
         # Solo una asignación combinada permite validar actas propias dentro de su ámbito.
-        actas = [
-            acta for acta in actas
-            if usuario["id"] not in {
+        actas_validas = []
+        for acta in actas:
+            id_franja = _id_franja_acta(acta, proceso)
+            autorizada_por_franja = any(
+                not asignacion.get("id_franjas") or id_franja in asignacion["id_franjas"]
+                for asignacion in asignaciones
+            )
+            es_autor = usuario["id"] in {
                 acta.get("id_creador"),
                 acta.get("id_operador"),
                 acta.get("id_enviado_por"),
-            } or acta.get("id_anfora") in ids_anforas_autovalidables
-        ]
+            }
+            puede_autovalidar = acta.get("id_anfora") in ids_anforas_autovalidables and any(
+                not asignacion.get("id_franjas") or id_franja in asignacion["id_franjas"]
+                for asignacion in asignaciones_combinadas
+            )
+            if autorizada_por_franja and (not es_autor or puede_autovalidar):
+                acta["id_franja"] = id_franja
+                actas_validas.append(acta)
+        actas = actas_validas
+    else:
+        for acta in actas:
+            acta["id_franja"] = _id_franja_acta(acta, proceso)
     ids_mesas = list({acta.get("id_mesa") for acta in actas if acta.get("id_mesa")})
     ids_anforas_actas = list({acta.get("id_anfora") for acta in actas if acta.get("id_anfora")})
     mesas = await db.mesas_sufragio.find(
@@ -1386,6 +1707,19 @@ async def guardar_asignacion_operativa(
 ):
     if not (req.id_nodos or req.id_recintos or req.id_mesas or req.id_anforas):
         raise HTTPException(400, "Seleccione al menos un nodo, recinto, mesa o ánfora")
+    if not req.id_franjas:
+        raise HTTPException(400, "Seleccione una o más franjas para esta asignación")
+    proceso = await db.procesos_electorales.find_one(
+        {"id_eleccion": id_eleccion},
+        {"_id": 0, "papeletas.franjas.id_franja": 1},
+    )
+    franjas_validas = {
+        franja.get("id_franja")
+        for papeleta in (proceso or {}).get("papeletas", [])
+        for franja in papeleta.get("franjas", [])
+    }
+    if len(set(req.id_franjas)) != len(req.id_franjas) or not set(req.id_franjas) <= franjas_validas:
+        raise HTTPException(400, "La selección contiene franjas ajenas a la elección")
     usuario = await db.usuarios.find_one({"id": req.id_usuario}, {"_id": 0, "id": 1})
     if not usuario:
         raise HTTPException(404, "Usuario no encontrado")
@@ -1410,6 +1744,7 @@ async def guardar_asignacion_operativa(
         "id_recintos": list(dict.fromkeys(req.id_recintos)),
         "id_mesas": list(dict.fromkeys(req.id_mesas)),
         "id_anforas": list(dict.fromkeys(req.id_anforas)),
+        "id_franjas": list(dict.fromkeys(req.id_franjas)),
         "asignado_por": admin["id"],
         "creado_en": ahora,
     }
@@ -1972,14 +2307,16 @@ async def procesar_ocr(usuario: dict = Depends(usuario_actual)):
 async def subir_imagen_acta(
     id_eleccion: str = Form(...),
     id_anfora: str = Form(...),
-    id_papeleta: Optional[str] = Form(None),
+    id_franja: str = Form(...),
     archivo: UploadFile = File(...),
     usuario: dict = Depends(usuario_actual),
 ):
     proc = await db.procesos_electorales.find_one({"id_eleccion": id_eleccion})
     if not proc:
         raise HTTPException(404, "Proceso electoral no existe")
-    await _autorizar_anfora_operativa(usuario, id_eleccion, id_anfora, "guardar")
+    await _autorizar_anfora_operativa(
+        usuario, id_eleccion, id_anfora, "cargar", id_franja=id_franja,
+    )
 
     contenido = await archivo.read()
     if len(contenido) == 0:
@@ -2043,7 +2380,7 @@ async def resumen_eleccion(id_eleccion: str, usuario: dict = Depends(requerir_re
         {"id_eleccion": id_eleccion, "esta_bloqueada": True},
         {"_id": 0},
     ).sort("actualizado_en", -1).to_list(5000)
-    actas = _actas_unicas_por_anfora(actas)
+    actas = _actas_unicas_por_anfora(actas, proc)
 
     resultado_por_franja = {}
     for p in proc.get("papeletas", []):
@@ -2086,7 +2423,7 @@ async def estado_resultados(
 ):
     proceso = await db.procesos_electorales.find_one(
         {"id_eleccion": id_eleccion},
-        {"_id": 0, "id_eleccion": 1, "nombre": 1, "tipo": 1},
+        {"_id": 0},
     )
     if not proceso:
         raise HTTPException(404, "Proceso electoral no encontrado")
@@ -2099,7 +2436,7 @@ async def estado_resultados(
         },
         {"_id": 0},
     ).sort("actualizado_en", -1).to_list(20000)
-    actas = _actas_unicas_por_anfora(actas)
+    actas = _actas_unicas_por_anfora(actas, proceso)
     mesas_recientes = await db.mesas_sufragio.find(
         {
             "id_eleccion": id_eleccion,
@@ -2109,6 +2446,10 @@ async def estado_resultados(
     ).to_list(10)
     mesas_recientes = await _sincronizar_tipo_mesa_legado(id_eleccion, mesas_recientes)
     tipo_por_mesa = {mesa["id"]: mesa.get("tipo_mesa") for mesa in mesas_recientes}
+    titulo_por_franja = {
+        id_franja: franja.get("titulo")
+        for id_franja, (_, franja) in _mapa_franjas_proceso(proceso).items()
+    }
     anforas_escrutadas = {acta["id_anfora"] for acta in actas if acta.get("id_anfora")}
     total_escrutadas = len(anforas_escrutadas)
     total_faltantes = max(0, total_anforas - total_escrutadas)
@@ -2122,6 +2463,8 @@ async def estado_resultados(
             "recinto": acta.get("recinto"),
             "ambiente": acta.get("ambiente"),
             "tipo_mesa": tipo_por_mesa.get(acta.get("id_mesa")),
+            "id_franja": acta.get("id_franja"),
+            "franja": titulo_por_franja.get(acta.get("id_franja")),
             "actualizado_en": acta.get("actualizado_en"),
         })
     return {
@@ -2135,6 +2478,7 @@ async def estado_resultados(
             "porcentaje_escrutadas": porcentaje(total_escrutadas),
             "porcentaje_faltantes": porcentaje(total_faltantes),
         },
+        "actas": _resumen_avance_actas(id_eleccion, proceso, actas),
     }
 
 
@@ -2149,26 +2493,70 @@ def _base_y_umbral(resultado: dict, base_calculo: str) -> tuple[int, int]:
     return base, (base // 2) + 1
 
 
-def _actas_unicas_por_anfora(actas: List[dict]) -> List[dict]:
-    por_anfora = {}
-    sin_anfora = []
+def _actas_unicas_por_anfora(actas: List[dict], proceso: Optional[dict] = None) -> List[dict]:
+    """Compatibilidad histórica del nombre: ahora devuelve una fila por franja."""
+    if proceso:
+        return _actas_por_franja(actas, proceso)
+    por_acta_franja = {}
     for acta in actas:
-        id_anfora = acta.get("id_anfora")
-        if not id_anfora:
-            sin_anfora.append(acta)
-            continue
-        actual = por_anfora.get(id_anfora)
-        if not actual:
-            por_anfora[id_anfora] = acta
-            continue
-        puntaje = lambda documento: (
-            bool(documento.get("conteos")),
-            bool(documento.get("esta_bloqueada")),
-            documento.get("actualizado_en", ""),
+        ids_franja = [acta.get("id_franja")] if acta.get("id_franja") else [
+            conteo.get("id_franja") for conteo in acta.get("conteos", [])
+        ]
+        for id_franja in dict.fromkeys(item for item in ids_franja if item):
+            copia = dict(acta)
+            copia["id_franja"] = id_franja
+            copia["conteos"] = [
+                conteo for conteo in acta.get("conteos", [])
+                if conteo.get("id_franja") == id_franja
+            ]
+            por_acta_franja.setdefault((acta.get("id_anfora"), id_franja), copia)
+    return list(por_acta_franja.values())
+
+
+async def _resumen_avance_actas(
+    id_eleccion: str,
+    proceso: dict,
+    actas: List[dict],
+    id_franja: Optional[str] = None,
+) -> dict:
+    mapa_franjas = _mapa_franjas_proceso(proceso)
+    if id_franja and id_franja in mapa_franjas:
+        papeleta, _ = mapa_franjas[id_franja]
+        total = await db.anforas_mesa.count_documents({
+            "id_eleccion": id_eleccion,
+            "id_papeletas": papeleta.get("id_papeleta"),
+        })
+    else:
+        anforas = await db.anforas_mesa.find(
+            {"id_eleccion": id_eleccion},
+            {"_id": 0, "id": 1, "id_papeletas": 1},
+        ).to_list(20000)
+        total = sum(
+            sum(
+                1
+                for papeleta, _ in mapa_franjas.values()
+                if papeleta.get("id_papeleta") in set(anfora.get("id_papeletas") or [])
+            )
+            for anfora in anforas
         )
-        if puntaje(acta) > puntaje(actual):
-            por_anfora[id_anfora] = acta
-    return [*por_anfora.values(), *sin_anfora]
+    consolidadas = {
+        (acta.get("id_anfora"), acta.get("id_franja"))
+        for acta in actas
+        if acta.get("esta_bloqueada")
+        and acta.get("id_anfora")
+        and acta.get("id_franja")
+        and (not id_franja or acta.get("id_franja") == id_franja)
+    }
+    escrutadas = len(consolidadas)
+    faltantes = max(0, total - escrutadas)
+    porcentaje = lambda cantidad: round(cantidad * 100 / total, 2) if total else 0
+    return {
+        "total": total,
+        "escrutadas": escrutadas,
+        "faltantes": faltantes,
+        "porcentaje_escrutadas": porcentaje(escrutadas),
+        "porcentaje_faltantes": porcentaje(faltantes),
+    }
 
 
 def _clave_orden_natural(registro: dict, campo: str) -> tuple:
@@ -2210,12 +2598,13 @@ async def _consolidado_publico(
             },
             {"_id": 0, "id_anfora": 1, "conteos": 1, "esta_bloqueada": 1, "actualizado_en": 1},
         ).sort("actualizado_en", -1).to_list(20000)
-    actas = _actas_unicas_por_anfora(actas)
+    actas = _actas_unicas_por_anfora(actas, proceso)
     resultados = {}
     for papeleta in proceso.get("papeletas", []):
         for franja in papeleta.get("franjas", []):
             resultados[franja["id_franja"]] = {
                 "titulo": franja["titulo"],
+                "id_papeleta": papeleta.get("id_papeleta"),
                 "nombre_papeleta": papeleta.get("nombre", ""),
                 "tipo_voto": franja.get("tipo_voto"),
                 "base_calculo": franja.get("calcular_porcentaje_sobre", "solo_validos"),
@@ -2275,16 +2664,21 @@ async def listar_procesos_publicos():
 
 @api.get("/publico/procesos/{id_eleccion}/localizador")
 async def localizador_publico_actas(id_eleccion: str):
-    await _consolidado_publico(id_eleccion)
-    actas = await db.actas.find(
+    proceso = await db.procesos_electorales.find_one(
+        {"id_eleccion": id_eleccion, "activo": True},
+        {"_id": 0},
+    )
+    if not proceso:
+        raise HTTPException(404, "Elección pública no encontrada")
+    documentos_actas = await db.actas.find(
         {
             "id_eleccion": id_eleccion,
             "id_anfora": {"$exists": True, "$ne": None},
             "esta_bloqueada": True,
         },
-        {"_id": 0, "id_anfora": 1},
+        {"_id": 0},
     ).sort("actualizado_en", -1).to_list(20000)
-    actas = _actas_unicas_por_anfora(actas)
+    actas = _actas_unicas_por_anfora(documentos_actas, proceso)
     ids_anfora = list({acta["id_anfora"] for acta in actas})
     anforas = await db.anforas_mesa.find(
         {"id_eleccion": id_eleccion, "id": {"$in": ids_anfora}},
@@ -2328,6 +2722,7 @@ async def localizador_publico_actas(id_eleccion: str):
             tipos_legacy = tipos_legacy_por_mesa.get(mesa["id"], set())
             mesa["tipo_mesa"] = next(iter(tipos_legacy)) if len(tipos_legacy) == 1 else None
     mesas.sort(key=_clave_orden_mesa)
+    mesas_por_id = {mesa["id"]: mesa for mesa in mesas}
     recintos = await db.recintos_electorales.find(
         {"id_eleccion": id_eleccion, "id": {"$in": ids_recinto}},
         {"_id": 0, "id": 1, "id_nodo_padre": 1, "nombre": 1, "path_ancestros": 1},
@@ -2340,27 +2735,63 @@ async def localizador_publico_actas(id_eleccion: str):
         {"id_eleccion": id_eleccion, "id": {"$in": list(ids_nodo - {None})}},
         {"_id": 0, "id": 1, "id_padre": 1, "nombre_nivel": 1, "nombre_nodo": 1},
     ).to_list(5000)
-    return {"nodos": nodos, "recintos": recintos, "mesas": mesas, "anforas": anforas}
+    anforas_por_id = {anfora["id"]: anfora for anfora in anforas}
+    mapa_franjas = _mapa_franjas_proceso(proceso)
+    actas_publicas = []
+    for acta in actas:
+        anfora = anforas_por_id.get(acta.get("id_anfora"), {})
+        papeleta, franja = mapa_franjas.get(acta.get("id_franja"), ({}, {}))
+        mesa = mesas_por_id.get(anfora.get("id_mesa"), {})
+        actas_publicas.append({
+            "id": acta.get("id"),
+            "id_acta": acta.get("id"),
+            "id_anfora": acta.get("id_anfora"),
+            "id_franja": acta.get("id_franja"),
+            "franja": franja.get("titulo"),
+            "id_papeleta": papeleta.get("id_papeleta"),
+            "numero_anfora": anfora.get("numero_anfora"),
+            "nombre_anfora": anfora.get("nombre"),
+            "id_mesa": anfora.get("id_mesa"),
+            "numero_mesa": mesa.get("numero_mesa"),
+            "id_recinto": anfora.get("id_recinto"),
+            "actualizado_en": acta.get("actualizado_en"),
+        })
+    return {
+        "nodos": nodos,
+        "recintos": recintos,
+        "mesas": mesas,
+        "anforas": anforas,
+        "actas": actas_publicas,
+    }
 
 
 @api.get("/publico/procesos/{id_eleccion}/actas/{id_anfora}")
-async def acta_publica(id_eleccion: str, id_anfora: str):
-    acta = await db.actas.find_one(
-        {
-            "id_eleccion": id_eleccion,
-            "id_anfora": id_anfora,
-            "esta_bloqueada": True,
-        },
-        {"_id": 0},
-    )
-    if not acta:
-        raise HTTPException(404, "Acta consolidada no encontrada")
+async def acta_publica(
+    id_eleccion: str,
+    id_anfora: str,
+    id_franja: Optional[str] = None,
+):
     proceso = await db.procesos_electorales.find_one(
         {"id_eleccion": id_eleccion, "activo": True},
         {"_id": 0, "papeletas": 1, "tipo": 1},
     )
     if not proceso:
         raise HTTPException(404, "Elección pública no encontrada")
+    documentos_actas = await db.actas.find(
+        {
+            "id_eleccion": id_eleccion,
+            "id_anfora": id_anfora,
+            "esta_bloqueada": True,
+        },
+        {"_id": 0},
+    ).sort("actualizado_en", -1).to_list(100)
+    actas = _actas_por_franja(documentos_actas, proceso)
+    acta = next(
+        (registro for registro in actas if registro.get("id_franja") == id_franja),
+        None,
+    ) if id_franja else (actas[0] if actas else None)
+    if not acta:
+        raise HTTPException(404, "Acta consolidada no encontrada")
     anfora = await db.anforas_mesa.find_one(
         {"id_eleccion": id_eleccion, "id": id_anfora},
         {
@@ -2385,13 +2816,15 @@ async def acta_publica(id_eleccion: str, id_anfora: str):
     for papeleta in proceso.get("papeletas", []):
         for franja in papeleta.get("franjas", []):
             franjas[franja["id_franja"]] = (papeleta, franja)
-    ids_papeletas = set(anfora.get("id_papeletas") or [])
-    if not ids_papeletas:
-        ids_papeletas = {
-            referencia[0]["id_papeleta"]
-            for conteo in acta.get("conteos", [])
-            if (referencia := franjas.get(conteo.get("id_franja")))
-        }
+    conteos_acta = [
+        conteo for conteo in acta.get("conteos", [])
+        if conteo.get("id_franja") == acta.get("id_franja")
+    ]
+    ids_papeletas = {
+        referencia[0]["id_papeleta"]
+        for conteo in conteos_acta
+        if (referencia := franjas.get(conteo.get("id_franja")))
+    }
     papeletas_publicas = [
         {
             "id_papeleta": papeleta["id_papeleta"],
@@ -2401,7 +2834,7 @@ async def acta_publica(id_eleccion: str, id_anfora: str):
         if papeleta.get("id_papeleta") in ids_papeletas
     ]
     conteos = []
-    for conteo in acta.get("conteos", []):
+    for conteo in conteos_acta:
         referencia = franjas.get(conteo.get("id_franja"))
         if not referencia:
             continue
@@ -2433,7 +2866,9 @@ async def acta_publica(id_eleccion: str, id_anfora: str):
             "votos_nulos": int(conteo.get("votos_nulos") or 0),
         })
     return {
+        "id_acta": acta.get("id"),
         "id_anfora": id_anfora,
+        "id_franja": acta.get("id_franja"),
         "numero_anfora": acta.get("numero_anfora"),
         "nombre_anfora": anfora.get("nombre"),
         "numero_mesa": mesa.get("numero_mesa") if mesa else None,
@@ -2449,24 +2884,119 @@ async def acta_publica(id_eleccion: str, id_anfora: str):
     }
 
 
-@api.get("/publico/procesos/{id_eleccion}/resultados")
-async def _generar_resultados_publicos(id_eleccion: str) -> dict:
+async def _generar_resultados_publicos(
+    id_eleccion: str,
+    id_papeleta: Optional[str] = None,
+    id_franja: Optional[str] = None,
+) -> dict:
     filtro_actas = {
         "id_eleccion": id_eleccion,
         "id_anfora": {"$exists": True, "$ne": None},
         "esta_bloqueada": True,
     }
-    proceso, actas, total_anforas = await asyncio.gather(
-        db.procesos_electorales.find_one(
-            {"id_eleccion": id_eleccion, "activo": True},
-            {"_id": 0},
+    proceso = await db.procesos_electorales.find_one(
+        {"id_eleccion": id_eleccion, "activo": True},
+        {"_id": 0},
+    )
+    if not proceso:
+        raise HTTPException(404, "Elección pública no encontrada")
+
+    papeletas = [
+        {
+            "id_papeleta": papeleta.get("id_papeleta"),
+            "nombre": papeleta.get("nombre", "Papeleta sin nombre"),
+            "franjas": [
+                {
+                    "id_franja": franja.get("id_franja"),
+                    "titulo": franja.get("titulo", "Franja"),
+                }
+                for franja in papeleta.get("franjas", [])
+                if franja.get("id_franja")
+            ],
+        }
+        for papeleta in proceso.get("papeletas", [])
+    ]
+    papeleta_seleccionada = next(
+        (papeleta for papeleta in papeletas if papeleta["id_papeleta"] == id_papeleta),
+        None,
+    )
+    if id_papeleta and not papeleta_seleccionada:
+        raise HTTPException(400, "La papeleta no pertenece a esta elección")
+
+    papeleta_de_franja = next(
+        (
+            papeleta
+            for papeleta in papeletas
+            if any(franja["id_franja"] == id_franja for franja in papeleta["franjas"])
         ),
+        None,
+    ) if id_franja else None
+    if id_franja and not papeleta_de_franja:
+        raise HTTPException(400, "La franja no pertenece a esta elección")
+    if papeleta_de_franja:
+        if papeleta_seleccionada and papeleta_seleccionada["id_papeleta"] != papeleta_de_franja["id_papeleta"]:
+            raise HTTPException(400, "La franja no pertenece a la papeleta seleccionada")
+        papeleta_seleccionada = papeleta_de_franja
+    elif not papeleta_seleccionada:
+        papeleta_seleccionada = next(
+            (
+                papeleta for papeleta in papeletas
+                if any("vicerrector" in str(franja["titulo"]).casefold() for franja in papeleta["franjas"])
+            ),
+            None,
+        ) or next((papeleta for papeleta in papeletas if papeleta["franjas"]), None)
+
+    if papeleta_seleccionada and not id_franja:
+        franja_preferida = next(
+            (
+                franja for franja in papeleta_seleccionada["franjas"]
+                if "vicerrector" in str(franja["titulo"]).casefold()
+            ),
+            None,
+        ) if not id_papeleta else None
+        id_franja = (franja_preferida or papeleta_seleccionada["franjas"][0])["id_franja"]
+
+    papeleta_original = next(
+        (
+            papeleta
+            for papeleta in proceso.get("papeletas", [])
+            if papeleta_seleccionada
+            and papeleta.get("id_papeleta") == papeleta_seleccionada["id_papeleta"]
+        ),
+        None,
+    )
+    franja_original = next(
+        (
+            franja for franja in (papeleta_original or {}).get("franjas", [])
+            if franja.get("id_franja") == id_franja
+        ),
+        None,
+    )
+    proceso_resultados = dict(proceso)
+    proceso_resultados["papeletas"] = (
+        [{**papeleta_original, "franjas": [franja_original]}]
+        if papeleta_original and franja_original
+        else []
+    )
+
+    if id_franja:
+        franjas_legadas = [
+            franja_id
+            for franja_id, (_, franja) in _mapa_franjas_proceso(proceso).items()
+            if "vicerrector" in str(franja.get("titulo", "")).casefold()
+        ]
+        filtro_actas["$or"] = [{"id_franja": id_franja}]
+        if not franjas_legadas or id_franja in franjas_legadas:
+            filtro_actas["$or"].append({"id_franja": {"$exists": False}})
+
+    actas, total_anforas = await asyncio.gather(
         db.actas.find(
             filtro_actas,
             {
                 "_id": 0,
                 "id": 1,
                 "id_anfora": 1,
+                "id_franja": 1,
                 "id_mesa": 1,
                 "numero_anfora": 1,
                 "recinto": 1,
@@ -2479,12 +3009,14 @@ async def _generar_resultados_publicos(id_eleccion: str) -> dict:
         ).sort("actualizado_en", -1).to_list(20000),
         db.anforas_mesa.count_documents({"id_eleccion": id_eleccion}),
     )
-    if not proceso:
-        raise HTTPException(404, "Elección pública no encontrada")
 
-    actas_unicas = _actas_unicas_por_anfora(actas)
-    consolidado = await _consolidado_publico(id_eleccion, proceso, actas_unicas)
-    escrutadas = len(actas_unicas)
+    actas_unicas = _actas_unicas_por_anfora(actas, proceso_resultados)
+    actas_unicas = [
+        acta for acta in actas_unicas
+        if not id_franja or acta.get("id_franja") == id_franja
+    ]
+    consolidado = await _consolidado_publico(id_eleccion, proceso_resultados, actas_unicas)
+    escrutadas = len({acta.get("id_anfora") for acta in actas_unicas if acta.get("id_anfora")})
     faltantes = max(0, total_anforas - escrutadas)
     porcentaje = lambda valor: round((valor / total_anforas * 100) if total_anforas else 0, 2)
     consolidado["anforas"] = {
@@ -2493,6 +3025,16 @@ async def _generar_resultados_publicos(id_eleccion: str) -> dict:
         "faltantes": faltantes,
         "porcentaje_escrutadas": porcentaje(escrutadas),
         "porcentaje_faltantes": porcentaje(faltantes),
+    }
+    consolidado["actas"] = await _resumen_avance_actas(
+        id_eleccion,
+        proceso,
+        actas_unicas,
+        id_franja,
+    )
+    titulo_por_franja = {
+        id_franja: franja.get("titulo")
+        for id_franja, (_, franja) in _mapa_franjas_proceso(proceso_resultados).items()
     }
     consolidado["actas_recientes"] = [
         {
@@ -2506,41 +3048,62 @@ async def _generar_resultados_publicos(id_eleccion: str) -> dict:
                 "tipo_mesa",
                 "actualizado_en",
             )
+        } | {
+            "id_franja": acta.get("id_franja"),
+            "franja": titulo_por_franja.get(acta.get("id_franja")),
         }
         for acta in actas_unicas[:10]
     ]
-    if proceso.get("tipo") == "universitaria":
+    if proceso.get("tipo") == "universitaria" and franja_original:
         consolidado["universitario"] = await _calcular_resultado_universitario(
             id_eleccion,
-            proceso=proceso,
+            proceso=proceso_resultados,
             actas=actas_unicas,
             solo_lectura=True,
         )
+    consolidado["papeletas"] = papeletas
+    consolidado["seleccion"] = {
+        "id_papeleta": papeleta_seleccionada.get("id_papeleta") if papeleta_seleccionada else "",
+        "id_franja": id_franja or "",
+    }
     return consolidado
 
 
 @api.get("/publico/procesos/{id_eleccion}/resultados")
-async def resultados_publicos(id_eleccion: str):
+async def resultados_publicos(
+    id_eleccion: str,
+    id_papeleta: Optional[str] = None,
+    id_franja: Optional[str] = None,
+):
     loop = asyncio.get_running_loop()
     ahora = loop.time()
-    cache = _resultados_publicos_cache.get(id_eleccion)
+    cache_key = (id_eleccion, id_papeleta or "", id_franja or "")
+    cache = _resultados_publicos_cache.get(cache_key)
     if cache and cache[0] > ahora:
         return cache[1]
 
-    lock = _resultados_publicos_locks.setdefault(id_eleccion, asyncio.Lock())
+    lock = _resultados_publicos_locks.setdefault(cache_key, asyncio.Lock())
     async with lock:
         ahora = loop.time()
-        cache = _resultados_publicos_cache.get(id_eleccion)
+        cache = _resultados_publicos_cache.get(cache_key)
         if cache and cache[0] > ahora:
             return cache[1]
 
         version = _resultados_publicos_versiones.get(id_eleccion, 0)
-        resultados = await _generar_resultados_publicos(id_eleccion)
+        resultados = await _generar_resultados_publicos(id_eleccion, id_papeleta, id_franja)
         if _resultados_publicos_versiones.get(id_eleccion, 0) == version:
-            _resultados_publicos_cache[id_eleccion] = (
-                loop.time() + _RESULTADOS_PUBLICOS_TTL_SEGUNDOS,
+            vencimiento = loop.time() + _RESULTADOS_PUBLICOS_TTL_SEGUNDOS
+            _resultados_publicos_cache[cache_key] = (
+                vencimiento,
                 resultados,
             )
+            seleccion = resultados.get("seleccion") or {}
+            clave_seleccionada = (
+                id_eleccion,
+                seleccion.get("id_papeleta") or "",
+                seleccion.get("id_franja") or "",
+            )
+            _resultados_publicos_cache[clave_seleccionada] = (vencimiento, resultados)
         return resultados
 
 # ------------- Admin: Gestión de Elecciones (CRUD dinámico) -------------
@@ -3627,7 +4190,7 @@ async def _calcular_resultado_universitario(
             {"id_eleccion": id_eleccion, "esta_bloqueada": True},
             {"_id": 0, "id_anfora": 1, "id_mesa": 1, "tipo_mesa": 1, "conteos": 1, "esta_bloqueada": 1, "actualizado_en": 1},
         ).sort("actualizado_en", -1).to_list(20000)
-    actas = _actas_unicas_por_anfora(actas)
+    actas = _actas_unicas_por_anfora(actas, proceso)
     ids_mesa = list({acta.get("id_mesa") for acta in actas if acta.get("id_mesa")})
     mesas = await db.mesas_sufragio.find(
         {"id_eleccion": id_eleccion, "id": {"$in": ids_mesa}},
@@ -3912,12 +4475,7 @@ async def generar_reportes_eleccion(
                 "actualizado_en": 1,
             },
         ).sort("actualizado_en", -1).to_list(20000)
-    actas = _actas_unicas_por_anfora(actas)
-    actas_por_anfora = {
-        acta.get("id_anfora"): acta
-        for acta in actas
-        if acta.get("id_anfora")
-    }
+    actas = _actas_unicas_por_anfora(actas, proceso)
     mesas = await db.mesas_sufragio.find(
         {
             "id_eleccion": id_eleccion,
@@ -3950,7 +4508,8 @@ async def generar_reportes_eleccion(
                 } if proceso.get("tipo") == "universitaria" else None,
             }
 
-    for id_anfora, acta in actas_por_anfora.items():
+    for acta in actas:
+        id_anfora = acta.get("id_anfora")
         anfora = anforas_por_id.get(id_anfora, {})
         tipo_mesa = tipo_por_mesa.get(anfora.get("id_mesa")) or acta.get("tipo_mesa")
         for conteo in acta.get("conteos", []):
@@ -3994,7 +4553,22 @@ async def generar_reportes_eleccion(
             salida["ponderacion"] = None
         resultados_franjas.append(salida)
 
-    ids_actas_consolidadas = set(actas_por_anfora)
+    ids_actas_consolidadas = {
+        (acta.get("id_anfora"), acta.get("id_franja"))
+        for acta in actas
+        if acta.get("id_anfora") and acta.get("id_franja")
+    }
+    ids_anforas_consolidadas = {
+        id_anfora for id_anfora, _ in ids_actas_consolidadas
+    }
+    franjas_por_papeleta = {
+        papeleta.get("id_papeleta"): len(papeleta.get("franjas", []))
+        for papeleta in proceso.get("papeletas", [])
+    }
+    actas_esperadas = sum(
+        sum(franjas_por_papeleta.get(id_papeleta, 0) for id_papeleta in (anfora.get("id_papeletas") or []))
+        for anfora in anforas
+    )
     return {
         "proceso": {
             "id_eleccion": proceso["id_eleccion"],
@@ -4004,7 +4578,9 @@ async def generar_reportes_eleccion(
         "filtros": {
             "anforas_encontradas": len(anforas),
             "actas_consolidadas": len(ids_actas_consolidadas),
-            "anforas_faltantes": max(0, len(anforas) - len(ids_actas_consolidadas)),
+            "anforas_faltantes": max(0, len(anforas) - len(ids_anforas_consolidadas)),
+            "actas_esperadas": actas_esperadas,
+            "actas_faltantes": max(0, actas_esperadas - len(ids_actas_consolidadas)),
         },
         "franjas": resultados_franjas,
     }
@@ -4234,6 +4810,13 @@ async def al_iniciar():
         ("esta_bloqueada", 1),
         ("actualizado_en", -1),
     ])
+    # Acelera la consulta pública de actas consolidadas por franja seleccionada.
+    await db.actas.create_index([
+        ("id_eleccion", 1),
+        ("id_franja", 1),
+        ("esta_bloqueada", 1),
+        ("actualizado_en", -1),
+    ])
     # Fase 2: índices para árbol jerárquico y agregaciones NoSQL
     await db.nodos_jerarquicos.create_index([("id_eleccion", 1), ("id_padre", 1)])
     await db.nodos_jerarquicos.create_index([("id_eleccion", 1), ("path_ancestros.id", 1)])
@@ -4253,6 +4836,11 @@ async def al_iniciar():
     )
     await db.asignaciones_operativas.create_index("id", unique=True)
     await db.actas.create_index([("id_eleccion", 1), ("id_anfora", 1), ("estado", 1)])
+    await db.actas.create_index(
+        [("id_eleccion", 1), ("id_anfora", 1), ("id_franja", 1)],
+        unique=True,
+        partialFilterExpression={"id_franja": {"$type": "string"}},
+    )
     await db.sesiones_revocadas.create_index("jti", unique=True)
     await db.sesiones_revocadas.create_index("expira_en", expireAfterSeconds=0)
     await db.intentos_login.create_index("email")
