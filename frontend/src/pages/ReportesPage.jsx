@@ -367,6 +367,11 @@ export default function ReportesPage() {
               <span><strong className="text-slate-800">Actas faltantes:</strong> {numero(reporte.filtros?.actas_faltantes)}</span>
               <span><strong className="text-slate-800">Ánforas sin acta:</strong> {numero(reporte.filtros?.anforas_faltantes)}</span>
             </div>
+            {reporte.proceso?.es_segunda_vuelta && reporte.proceso?.tipo === "universitaria" && (
+              <div className="mt-3 border-l-2 border-blue-700 bg-blue-50 px-3 py-2 text-sm text-slate-700">
+                Segunda vuelta universitaria: gana la candidatura con mayor voto ponderado; no se aplica el umbral 50% + 1 por estamento.
+              </div>
+            )}
           </div>
 
           {Number(reporte.filtros?.actas_consolidadas || 0) === 0 && (
@@ -386,6 +391,12 @@ export default function ReportesPage() {
             {(reporte.franjas || []).map((franja) => {
               const resumen = franja.resumen || {};
               const ponderacion = franja.ponderacion;
+              const basePonderacion = ponderacion?.base_ponderacion === "votantes_habilitados"
+                ? "votantes habilitados"
+                : "votos emitidos";
+              const precisionPonderacion = ponderacion?.precision_ponderacion
+                || reporte.proceso?.precision_ponderacion_segunda_vuelta
+                || 2;
               return (
                 <article key={franja.id_franja} className="reportes-franja border border-slate-200 bg-white" data-testid={`franja-reporte-${franja.id_franja}`}>
                   <header className="border-b border-slate-200 bg-slate-50 px-4 py-3 sm:px-5">
@@ -404,9 +415,29 @@ export default function ReportesPage() {
                     <div className="space-y-4 p-4 sm:p-5">
                       {esUniversitaria ? (
                         <div className="border-l-2 border-[#1E3A8A] bg-[#EFF6FF] px-3 py-2 text-sm text-slate-700">
-                          Resultado ponderado para igualar los votos emitidos por ambos estamentos. Los votos y porcentajes corresponden a la ponderación configurada para esta franja.
+                          {reporte.proceso?.es_segunda_vuelta
+                            ? `Resultado ponderado de segunda vuelta. El factor se calcula con ${basePonderacion} y se redondea a ${precisionPonderacion} ${precisionPonderacion === 1 ? "decimal" : "decimales"}.`
+                            : "Resultado ponderado para igualar los votos emitidos por ambos estamentos. Los votos y porcentajes corresponden a la ponderación configurada para esta franja."}
                         </div>
                       ) : null}
+                      {reporte.proceso?.es_segunda_vuelta && ponderacion?.votos_estudiantes_por_voto_docente != null && (
+                        <div
+                          className={`border-l-4 p-3 text-sm ${
+                            ponderacion.ganadores_ponderados_nombres?.length === 1
+                              ? "border-emerald-600 bg-emerald-50 text-emerald-900"
+                              : ponderacion.ganadores_ponderados_nombres?.length > 1
+                                ? "border-amber-500 bg-amber-50 text-amber-900"
+                                : "border-slate-400 bg-slate-100 text-slate-700"
+                          }`}
+                          data-testid={`ganador-ponderado-reporte-${franja.id_franja}`}
+                        >
+                          {ponderacion.ganadores_ponderados_nombres?.length === 1
+                            ? `Gana la segunda vuelta: ${ponderacion.ganadores_ponderados_nombres[0]}.`
+                            : ponderacion.ganadores_ponderados_nombres?.length > 1
+                              ? `Empate en votos ponderados: ${ponderacion.ganadores_ponderados_nombres.join(", ")}.`
+                              : "No hay candidatura con votos ponderados disponibles."}
+                        </div>
+                      )}
                       {esUniversitaria && ponderacion?.votos_estudiantes_por_voto_docente == null && (
                         <div className="border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900" data-testid={`ponderacion-no-disponible-resumen-${franja.id_franja}`}>
                           {ponderacion?.mensaje || "La equivalencia no puede calcularse hasta que ambos estamentos tengan votos emitidos."}
@@ -439,9 +470,9 @@ export default function ReportesPage() {
                       ) : (
                         <>
                           <div className="grid grid-cols-1 gap-3 border border-slate-200 bg-slate-50 p-3 text-sm sm:grid-cols-3">
-                            <div><div className="text-xs text-slate-500">Factor estudiantes por voto docente</div><strong className="font-data text-lg">{numero(ponderacion.votos_estudiantes_por_voto_docente)}</strong></div>
-                            <div><div className="text-xs text-slate-500">Votos emitidos docentes</div><strong className="font-data text-lg">{numero(ponderacion.votos_emitidos_docentes)}</strong></div>
-                            <div><div className="text-xs text-slate-500">Votos emitidos estudiantes</div><strong className="font-data text-lg">{numero(ponderacion.votos_emitidos_estudiantes)}</strong></div>
+                            <div><div className="text-xs text-slate-500">Factor estudiantes ÷ docentes</div><strong className="font-data text-lg">{Number(ponderacion.votos_estudiantes_por_voto_docente).toLocaleString("es-BO", { minimumFractionDigits: precisionPonderacion, maximumFractionDigits: precisionPonderacion })}</strong></div>
+                            <div><div className="text-xs text-slate-500">Base {basePonderacion} docentes</div><strong className="font-data text-lg">{numero(ponderacion.total_base_docentes)}</strong></div>
+                            <div><div className="text-xs text-slate-500">Base {basePonderacion} estudiantes</div><strong className="font-data text-lg">{numero(ponderacion.total_base_estudiantes)}</strong></div>
                           </div>
                           {ponderacion.regla && <p className="text-sm text-slate-600">{ponderacion.regla}{ponderacion.unidad ? ` · Unidad: ${ponderacion.unidad}` : ""}</p>}
                           <TablaCandidatos candidatos={ponderacion.candidatos || []} equivalencia />

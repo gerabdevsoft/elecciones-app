@@ -320,7 +320,94 @@ function ResultadoGeneral({ resultado, tipoGrafica }) {
 
 function ResultadosUniversitarios({ datos, tipoGrafica }) {
   const franjas = Object.entries(datos?.por_estamento?.docente || {});
-  return franjas.map(([id, docente]) => <article key={id} className="border border-slate-200 bg-white p-4 sm:p-6" data-testid={`resultado-universitario-publico-${id}`}><div className="flex flex-wrap justify-between gap-4"><div><div className="text-[10px] font-data uppercase tracking-widest text-slate-500">Franja universitaria</div><h2 className="mt-1 font-display text-xl font-bold">{docente.titulo}</h2></div><div className="text-xs text-slate-500">Base: {docente.base_calculo?.replaceAll("_", " ")}</div></div><GanadorUniversitarioPublico resultado={datos?.por_franja?.[id]} /><div className="mt-5 grid grid-cols-1 gap-5 lg:grid-cols-2"><ResultadoEstamento nombre="Docentes" resultado={docente} tipoGrafica={tipoGrafica} /><ResultadoEstamento nombre="Estudiantes" resultado={datos?.por_estamento?.estudiante?.[id]} tipoGrafica={tipoGrafica} /></div></article>);
+  return franjas.map(([id, docente]) => {
+    const resultadoFranja = datos?.por_franja?.[id];
+    const esSegundaVuelta = resultadoFranja?.modo_resultado === "segunda_vuelta_ponderada";
+    return (
+      <article key={id} className="border border-slate-200 bg-white p-4 sm:p-6" data-testid={`resultado-universitario-publico-${id}`}>
+        <div className="flex flex-wrap justify-between gap-4">
+          <div><div className="text-[10px] font-data uppercase tracking-widest text-slate-500">Franja universitaria</div><h2 className="mt-1 font-display text-xl font-bold">{docente.titulo}</h2></div>
+          <div className="text-xs text-slate-500">Base: {docente.base_calculo?.replaceAll("_", " ")}</div>
+        </div>
+        {esSegundaVuelta ? (
+          <ResultadoPonderadoPublico resultado={resultadoFranja} tipoGrafica={tipoGrafica} />
+        ) : (
+          <>
+            <GanadorUniversitarioPublico resultado={resultadoFranja} />
+            <div className="mt-5 grid grid-cols-1 gap-5 lg:grid-cols-2">
+              <ResultadoEstamento nombre="Docentes" resultado={docente} tipoGrafica={tipoGrafica} />
+              <ResultadoEstamento nombre="Estudiantes" resultado={datos?.por_estamento?.estudiante?.[id]} tipoGrafica={tipoGrafica} />
+            </div>
+          </>
+        )}
+      </article>
+    );
+  });
+}
+
+function ResultadoPonderadoPublico({ resultado, tipoGrafica }) {
+  const ponderacion = resultado?.ponderacion || {};
+  const precision = resultado?.precision_ponderacion || ponderacion.precision_ponderacion || 2;
+  const numeroPonderado = (valor) => (
+    valor === null || valor === undefined
+      ? "—"
+      : Number(valor).toLocaleString("es-BO", { maximumFractionDigits: precision })
+  );
+  const candidatos = ordenarCandidatosPorNumeroLista(
+    (ponderacion.candidatos || []).map((candidato, indice) => ({
+      ...candidato,
+      id: candidato.id_candidato,
+      votos: candidato.votos_ponderados,
+      color: colores[indice % colores.length],
+    })),
+  );
+  const ganadores = resultado?.ganadores_ponderados_nombres || [];
+  const base = resultado?.base_ponderacion === "votantes_habilitados"
+    ? "votantes habilitados"
+    : "votos emitidos";
+
+  return (
+    <section className="mt-5 border border-blue-200" data-testid="resultado-ponderado-segunda-vuelta-publico">
+      <div className="bg-blue-50 p-4">
+        <h3 className="font-display font-bold text-slate-900">Resultado por voto ponderado</h3>
+        <p className="mt-1 text-sm text-slate-600">En segunda vuelta gana la candidatura con más votos ponderados; no aplica el 50% + 1 por estamento.</p>
+        <div className="mt-3 grid grid-cols-1 gap-3 text-sm sm:grid-cols-3">
+          <div><div className="text-xs text-slate-500">Factor estudiantes ÷ docentes</div><strong className="font-data text-lg">{numeroPonderado(ponderacion.votos_estudiantes_por_voto_docente)}</strong></div>
+          <div><div className="text-xs text-slate-500">Base: {base} docentes</div><strong className="font-data">{numeroPonderado(ponderacion.total_base_docentes)}</strong></div>
+          <div><div className="text-xs text-slate-500">Base: {base} estudiantes</div><strong className="font-data">{numeroPonderado(ponderacion.total_base_estudiantes)}</strong></div>
+        </div>
+      </div>
+      {ganadores.length === 1 ? (
+        <div className="border-t border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-900" data-testid="ganador-ponderado-publico">
+          <Trophy className="mr-1 inline h-4 w-4" />Gana la segunda vuelta: {ganadores[0]}.
+        </div>
+      ) : ganadores.length > 1 ? (
+        <div className="border-t border-amber-200 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-900">Empate en votos ponderados: {ganadores.join(", ")}.</div>
+      ) : (
+        <div className="border-t border-slate-200 px-4 py-3 text-sm text-slate-600">{ponderacion.mensaje || "Aún no se puede determinar el resultado ponderado."}</div>
+      )}
+      {candidatos.length ? (
+        <>
+          {candidatos.some((candidato) => candidato.votos !== null && candidato.votos !== undefined)
+            ? <Grafica candidatos={candidatos} tipo={tipoGrafica} />
+            : null}
+          <div className="divide-y divide-slate-100 px-4">
+            {candidatos.map((candidato) => (
+              <div key={candidato.id} className="grid grid-cols-2 gap-x-4 gap-y-1 py-3 text-sm sm:grid-cols-[minmax(0,1fr)_100px_120px_120px_130px]">
+                <div className="col-span-2 min-w-0 font-semibold text-slate-900 sm:col-span-1">{candidato.nombre}</div>
+                <div className="text-xs text-slate-500 sm:text-right">Docentes reales <strong className="font-data text-slate-800">{numeroPonderado(candidato.votos_docentes_reales)}</strong></div>
+                <div className="text-xs text-slate-500 sm:text-right">Equivalentes <strong className="font-data text-slate-800">{numeroPonderado(candidato.votos_docentes_equivalentes)}</strong></div>
+                <div className="text-xs text-slate-500 sm:text-right">Estudiantes <strong className="font-data text-slate-800">{numeroPonderado(candidato.votos_estudiantes_reales)}</strong></div>
+                <div className="text-xs font-semibold text-blue-800 sm:text-right">Ponderados <strong className="font-data">{numeroPonderado(candidato.votos_ponderados)}</strong></div>
+              </div>
+            ))}
+          </div>
+        </>
+      ) : (
+        <div className="p-5 text-sm text-slate-500">No hay candidaturas para esta franja.</div>
+      )}
+    </section>
+  );
 }
 
 function ResultadoEstamento({ nombre, resultado, tipoGrafica }) {

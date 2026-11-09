@@ -299,17 +299,32 @@ export default function GestionElectoralPage() {
 }
 
 function ModalProceso({ data, onClose, onOk }) {
-  const [form, setForm] = useState(data || { nombre: "", pais: "Bolivia", tipo: "nacional", fecha_eleccion: "2026-12-01", activo: true, es_segunda_vuelta: false });
+  const [form, setForm] = useState(() => ({
+    nombre: "",
+    pais: "Bolivia",
+    tipo: "nacional",
+    fecha_eleccion: "2026-12-01",
+    activo: true,
+    es_segunda_vuelta: false,
+    base_ponderacion_segunda_vuelta: "votos_emitidos",
+    precision_ponderacion_segunda_vuelta: 2,
+    ...(data || {}),
+    base_ponderacion_segunda_vuelta: data?.base_ponderacion_segunda_vuelta || "votos_emitidos",
+    precision_ponderacion_segunda_vuelta: data?.precision_ponderacion_segunda_vuelta || 2,
+  }));
   const [enviando, setEnviando] = useState(false);
   const PREFIJOS = { nacional: "PRES", departamental: "DEP", municipal: "MUN", universitaria: "UNIV", sindical: "SIND", otro: "OTRO" };
   const preview = data ? data.id_eleccion : `${PREFIJOS[form.tipo] || "OTRO"}-${(form.fecha_eleccion || "").slice(0,4) || "----"}-BO-${form.es_segunda_vuelta ? "02" : "01"}`;
+  const ponderacionSegundaVuelta = form.tipo === "universitaria" && form.es_segunda_vuelta;
   const guardar = async () => {
     setEnviando(true);
     try {
       if (data) {
         await api.put(`/admin/procesos/${data.id_eleccion}`, {
           nombre: form.nombre, pais: "Bolivia", tipo: form.tipo,
-          fecha_eleccion: form.fecha_eleccion, activo: form.activo
+          fecha_eleccion: form.fecha_eleccion, activo: form.activo,
+          base_ponderacion_segunda_vuelta: form.base_ponderacion_segunda_vuelta,
+          precision_ponderacion_segunda_vuelta: Number(form.precision_ponderacion_segunda_vuelta),
         });
         toast.success("Elección actualizada");
       } else {
@@ -355,6 +370,46 @@ function ModalProceso({ data, onClose, onOk }) {
             <div className="flex items-center justify-between p-3 bg-amber-50 rounded-md border border-amber-200">
               <div><div className="text-sm font-medium">Segunda Vuelta (Runoff)</div><div className="text-xs text-slate-500">Incrementa el contador a 02</div></div>
               <Switch checked={form.es_segunda_vuelta} onCheckedChange={(v) => setForm({ ...form, es_segunda_vuelta: v })} data-testid="switch-segunda-vuelta" />
+            </div>
+          )}
+          {ponderacionSegundaVuelta && (
+            <div className="space-y-3 rounded-md border border-blue-200 bg-blue-50 p-3" data-testid="configuracion-ponderacion-segunda-vuelta">
+              <div>
+                <div className="text-sm font-semibold text-slate-900">Voto ponderado para la segunda vuelta</div>
+                <p className="mt-1 text-xs text-slate-600">La candidatura con mayor total ponderado será la ganadora; no se aplica el umbral del 50% + 1 por estamento.</p>
+              </div>
+              <div>
+                <Label className="text-xs uppercase tracking-widest text-slate-600">Base para calcular el factor</Label>
+                <Select
+                  value={form.base_ponderacion_segunda_vuelta}
+                  onValueChange={(v) => setForm({ ...form, base_ponderacion_segunda_vuelta: v })}
+                >
+                  <SelectTrigger data-testid="select-base-ponderacion-segunda-vuelta"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="votos_emitidos">Votos emitidos de participantes</SelectItem>
+                    <SelectItem value="votantes_habilitados">Votantes habilitados</SelectItem>
+                  </SelectContent>
+                </Select>
+                <p className="mt-1 text-xs text-slate-500">
+                  {form.base_ponderacion_segunda_vuelta === "votantes_habilitados"
+                    ? "Factor = habilitados estudiantes ÷ habilitados docentes, según las ánforas asignadas a cada papeleta."
+                    : "Factor = votos emitidos estudiantes ÷ votos emitidos docentes; incluye válidos, blancos y nulos."}
+                </p>
+              </div>
+              <div>
+                <Label className="text-xs uppercase tracking-widest text-slate-600">Decimales del factor</Label>
+                <Select
+                  value={String(form.precision_ponderacion_segunda_vuelta)}
+                  onValueChange={(v) => setForm({ ...form, precision_ponderacion_segunda_vuelta: Number(v) })}
+                >
+                  <SelectTrigger data-testid="select-precision-ponderacion-segunda-vuelta"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {[1, 2, 3].map((cantidad) => (
+                      <SelectItem key={cantidad} value={String(cantidad)}>{cantidad} {cantidad === 1 ? "decimal" : "decimales"}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
             </div>
           )}
           <div className="flex items-center justify-between p-3 bg-slate-50 rounded-md">

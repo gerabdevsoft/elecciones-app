@@ -14,6 +14,13 @@ function etiquetaBase(base) {
   return etiquetas[base] || base;
 }
 
+function formatoPonderado(valor, decimales = 2) {
+  if (valor === null || valor === undefined) return "—";
+  return Number(valor).toLocaleString("es-BO", {
+    maximumFractionDigits: decimales,
+  });
+}
+
 function PanelEstamento({ nombre, resultado }) {
   if (!resultado) {
     return <div className="border border-slate-200 p-4 text-sm text-slate-400">Sin franjas registradas.</div>;
@@ -142,11 +149,17 @@ export default function ResultadosPage() {
                   </div>
                   <div className="text-xs font-data text-slate-500">Base: {etiquetaBase(docente.base_calculo)}</div>
                 </div>
-                <GanadorUniversitario resultado={ganadoresPorFranja[idFranja]} />
-                <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
-                  <PanelEstamento nombre="Docente" resultado={docente} />
-                  <PanelEstamento nombre="Estudiante" resultado={resultadosUniversitarios.estudiante?.[idFranja]} />
-                </div>
+                {ganadoresPorFranja[idFranja]?.modo_resultado === "segunda_vuelta_ponderada" ? (
+                  <ResultadoPonderado resultado={ganadoresPorFranja[idFranja]} />
+                ) : (
+                  <>
+                    <GanadorUniversitario resultado={ganadoresPorFranja[idFranja]} />
+                    <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
+                      <PanelEstamento nombre="Docente" resultado={docente} />
+                      <PanelEstamento nombre="Estudiante" resultado={resultadosUniversitarios.estudiante?.[idFranja]} />
+                    </div>
+                  </>
+                )}
               </article>
             ))
           ) : (
@@ -191,6 +204,60 @@ function GanadorUniversitario({ resultado }) {
     return <div className="mt-3 border-l-4 border-emerald-600 bg-emerald-50 p-3 text-sm text-emerald-900" data-testid="ganador-universitario-primera-vuelta"><Trophy className="mr-2 inline h-4 w-4" />Gana en primera vuelta: {nombres.join(", ")}. Superó el umbral en Docentes y Estudiantes.</div>;
   }
   return <div className="mt-3 border-l-4 border-slate-400 bg-slate-100 p-3 text-sm text-slate-700" data-testid="sin-ganador-universitario-primera-vuelta">Sin ganador de primera vuelta: una candidatura debe superar el 50% + 1 voto tanto en Docentes como en Estudiantes.</div>;
+}
+
+function ResultadoPonderado({ resultado }) {
+  const ponderacion = resultado?.ponderacion || {};
+  const precision = resultado?.precision_ponderacion || ponderacion.precision_ponderacion || 2;
+  const candidatos = ordenarCandidatosPorNumeroLista(
+    (ponderacion.candidatos || []).map((candidato) => ({
+      id: candidato.id_candidato,
+      ...candidato,
+    })),
+  );
+  const ganadores = resultado?.ganadores_ponderados_nombres || [];
+  const base = resultado?.base_ponderacion === "votantes_habilitados"
+    ? "votantes habilitados"
+    : "votos emitidos";
+
+  return (
+    <section className="mt-4 border border-blue-200 bg-white" data-testid="resultado-ponderado-segunda-vuelta">
+      <div className="border-b border-blue-200 bg-blue-50 p-4">
+        <div className="font-display font-bold text-slate-900">Resultado por voto ponderado</div>
+        <p className="mt-1 text-sm text-slate-600">En segunda vuelta gana la candidatura con más votos ponderados; no se aplica el 50% + 1 por estamento.</p>
+        <div className="mt-3 grid grid-cols-1 gap-3 text-sm sm:grid-cols-3">
+          <div><div className="text-xs text-slate-500">Factor estudiantes ÷ docentes</div><strong className="font-data text-lg">{formatoPonderado(ponderacion.votos_estudiantes_por_voto_docente, precision)}</strong></div>
+          <div><div className="text-xs text-slate-500">Base: {base} docentes</div><strong className="font-data">{formatoPonderado(ponderacion.total_base_docentes, 0)}</strong></div>
+          <div><div className="text-xs text-slate-500">Base: {base} estudiantes</div><strong className="font-data">{formatoPonderado(ponderacion.total_base_estudiantes, 0)}</strong></div>
+        </div>
+      </div>
+      {ganadores.length === 1 ? (
+        <div className="border-b border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-900">
+          <Trophy className="mr-2 inline h-4 w-4" />Gana la segunda vuelta: {ganadores[0]}.
+        </div>
+      ) : ganadores.length > 1 ? (
+        <div className="border-b border-amber-200 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-900">
+          Empate en votos ponderados: {ganadores.join(", ")}.
+        </div>
+      ) : (
+        <div className="border-b border-slate-200 px-4 py-3 text-sm text-slate-600">
+          {ponderacion.mensaje || "Aún no se puede determinar la candidatura con mayor ponderación."}
+        </div>
+      )}
+      <div className="divide-y divide-slate-100">
+        {candidatos.map((candidato) => (
+          <div key={candidato.id} className="grid grid-cols-2 gap-x-4 gap-y-1 px-4 py-3 text-sm sm:grid-cols-[minmax(0,1fr)_100px_120px_120px_130px]">
+            <div className="col-span-2 min-w-0 font-semibold text-slate-900 sm:col-span-1">{candidato.nombre}</div>
+            <div className="text-xs text-slate-500 sm:text-right">Docentes reales <strong className="font-data text-slate-800">{formatoPonderado(candidato.votos_docentes_reales, 0)}</strong></div>
+            <div className="text-xs text-slate-500 sm:text-right">Equivalentes <strong className="font-data text-slate-800">{formatoPonderado(candidato.votos_docentes_equivalentes, precision)}</strong></div>
+            <div className="text-xs text-slate-500 sm:text-right">Estudiantes <strong className="font-data text-slate-800">{formatoPonderado(candidato.votos_estudiantes_reales, 0)}</strong></div>
+            <div className="text-xs font-semibold text-blue-800 sm:text-right">Ponderados <strong className="font-data">{formatoPonderado(candidato.votos_ponderados, precision)}</strong></div>
+          </div>
+        ))}
+        {!candidatos.length && <div className="px-4 py-5 text-sm text-slate-500">No hay candidaturas para esta franja.</div>}
+      </div>
+    </section>
+  );
 }
 
 function Metrica({ titulo, cantidad, porcentaje, color }) {

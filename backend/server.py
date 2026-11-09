@@ -20,6 +20,7 @@ import unicodedata
 import random
 import bcrypt
 import jwt
+from decimal import Decimal, ROUND_HALF_UP
 from datetime import datetime, timezone, timedelta
 from typing import List, Optional, Literal, Any
 from fastapi import (
@@ -514,6 +515,8 @@ class ProcesoElectoral(BaseModel):
     tipo: Literal["nacional", "municipal", "departamental", "universitaria", "sindical", "otro"] = "nacional"
     fecha_eleccion: str  # ISO date
     activo: bool = True
+    base_ponderacion_segunda_vuelta: Literal["votos_emitidos", "votantes_habilitados"] = "votos_emitidos"
+    precision_ponderacion_segunda_vuelta: Literal[1, 2, 3] = 2
     papeletas: List[Papeleta] = []
     creado_en: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
@@ -3192,6 +3195,8 @@ class CrearProcesoReq(BaseModel):
     fecha_eleccion: str
     activo: bool = True
     es_segunda_vuelta: bool = False
+    base_ponderacion_segunda_vuelta: Literal["votos_emitidos", "votantes_habilitados"] = "votos_emitidos"
+    precision_ponderacion_segunda_vuelta: Literal[1, 2, 3] = 2
 
 class ActualizarProcesoReq(BaseModel):
     nombre: Optional[str] = None
@@ -3199,6 +3204,8 @@ class ActualizarProcesoReq(BaseModel):
     tipo: Optional[str] = None
     fecha_eleccion: Optional[str] = None
     activo: Optional[bool] = None
+    base_ponderacion_segunda_vuelta: Optional[Literal["votos_emitidos", "votantes_habilitados"]] = None
+    precision_ponderacion_segunda_vuelta: Optional[Literal[1, 2, 3]] = None
 
 class CrearPapeletaReq(BaseModel):
     nombre: str
@@ -3250,6 +3257,7 @@ async def admin_actualizar_proceso(id_eleccion: str, req: ActualizarProcesoReq, 
     if not upd: raise HTTPException(400, "Nada que actualizar")
     r = await db.procesos_electorales.update_one({"id_eleccion": id_eleccion}, {"$set": upd})
     if r.matched_count == 0: raise HTTPException(404, "Proceso no encontrado")
+    _invalidar_cache_resultados_publicos(id_eleccion)
     return await db.procesos_electorales.find_one({"id_eleccion": id_eleccion}, {"_id": 0})
 
 @api.delete("/admin/procesos/{id_eleccion}")
@@ -4227,24 +4235,72 @@ async def _calcular_resultado_universitario(
     if proceso is None:
         proceso = await db.procesos_electorales.find_one(
             {"id_eleccion": id_eleccion},
-            {"_id": 0, "tipo": 1, "papeletas": 1},
+            {
+                "_id": 0,
+                "tipo": 1,
+                "papeletas": 1,
+                "es_segunda_vuelta": 1,
+                "base_ponderacion_segunda_vuelta": 1,
+                "precision_ponderacion_segunda_vuelta": 1,
+            },
         )
     if not proceso:
         raise HTTPException(404, "Proceso electoral no encontrado")
     if proceso.get("tipo") != "universitaria":
         raise HTTPException(400, "Este cálculo solo aplica a elecciones universitarias")
 
+    es_segunda_vuelta = bool(proceso.get("es_segunda_vuelta"))
+    base_ponderacion = proceso.get(
+        "base_ponderacion_segunda_vuelta",
+        "votos_emitidos",
+    )
+    precision_ponderacion = int(
+        proceso.get("precision_ponderacion_segunda_vuelta", 2),
+    )
     franjas = {}
+    papeletas_por_id = {}
     for papeleta in proceso.get("papeletas", []):
+        id_papeleta = papeleta.get("id_papeleta")
+        if id_papeleta:
+            papeletas_por_id[id_papeleta] = papeleta
         for franja in papeleta.get("franjas", []):
-            franjas[franja["id_franja"]] = franja
+            franjas[franja["id_franja"]] = {
+                **franja,
+                "id_papeleta": id_papeleta,
+            }
     if actas is None:
         actas = await db.actas.find(
             {"id_eleccion": id_eleccion, "esta_bloqueada": True},
             {"_id": 0, "id_anfora": 1, "id_mesa": 1, "tipo_mesa": 1, "conteos": 1, "esta_bloqueada": 1, "actualizado_en": 1},
         ).sort("actualizado_en", -1).to_list(20000)
     actas = _actas_unicas_por_anfora(actas, proceso)
-    ids_mesa = list({acta.get("id_mesa") for acta in actas if acta.get("id_mesa")})
+    anforas_ponderacion = []
+    if (
+        es_segunda_vuelta
+        and base_ponderacion == "votantes_habilitados"
+        and papeletas_por_id
+    ):
+        anforas_ponderacion = await db.anforas_mesa.find(
+            {
+                "id_eleccion": id_eleccion,
+                "id_papeletas": {"$in": list(papeletas_por_id)},
+            },
+            {
+                "_id": 0,
+                "id_mesa": 1,
+                "id_papeletas": 1,
+                "cantidad_votantes": 1,
+                "tipo_mesa": 1,
+            },
+        ).to_list(20000)
+    ids_mesa = list({
+        id_mesa
+        for id_mesa in [
+            *(acta.get("id_mesa") for acta in actas),
+            *(anfora.get("id_mesa") for anfora in anforas_ponderacion),
+        ]
+        if id_mesa
+    })
     mesas = await db.mesas_sufragio.find(
         {"id_eleccion": id_eleccion, "id": {"$in": ids_mesa}},
         {"_id": 0, "id": 1, "tipo_mesa": 1},
@@ -4278,8 +4334,32 @@ async def _calcular_resultado_universitario(
                 if len(tipos) == 1:
                     mesa["tipo_mesa"] = next(iter(tipos))
     else:
-        mesas = await _sincronizar_tipo_mesa_legado(id_eleccion, mesas)
+        mesas = await _sincronizar_tipo_mesa_legado(
+            id_eleccion,
+            mesas,
+            tipo_eleccion=proceso.get("tipo"),
+        )
     tipo_por_mesa = {mesa["id"]: mesa.get("tipo_mesa") for mesa in mesas}
+
+    franjas_por_papeleta = {}
+    habilitados_por_franja = {
+        id_franja: {"docente": 0, "estudiante": 0}
+        for id_franja in franjas
+    }
+    for id_franja, franja in franjas.items():
+        franjas_por_papeleta.setdefault(franja.get("id_papeleta"), []).append(id_franja)
+    for anfora in anforas_ponderacion:
+        tipo_mesa = (
+            tipo_por_mesa.get(anfora.get("id_mesa"))
+            or anfora.get("tipo_mesa")
+        )
+        if tipo_mesa not in {"docente", "estudiante"}:
+            continue
+        cantidad_votantes = int(anfora.get("cantidad_votantes") or 0)
+        for id_papeleta in set(anfora.get("id_papeletas") or []):
+            for id_franja in franjas_por_papeleta.get(id_papeleta, []):
+                habilitados_por_franja[id_franja][tipo_mesa] += cantidad_votantes
+
     resultados = {}
     for tipo_mesa in ("docente", "estudiante"):
         resultados[tipo_mesa] = {}
@@ -4329,6 +4409,21 @@ async def _calcular_resultado_universitario(
                 for id_candidato, candidato in resultado["candidatos"].items()
                 if candidato["votos"] >= umbral
             ]
+
+    def resumen_estamento(resultado: dict) -> dict:
+        validos = sum(
+            candidato["votos"]
+            for candidato in resultado["candidatos"].values()
+        )
+        return {
+            "candidatos": [
+                {"id_candidato": id_candidato, **candidato}
+                for id_candidato, candidato in resultado["candidatos"].items()
+            ],
+            "total_emitidos": validos + resultado["votos_blancos"] + resultado["votos_nulos"],
+            "base_votos": resultado["base_votos"],
+        }
+
     por_franja = {}
     for id_franja, resultado_docente in resultados["docente"].items():
         resultado_estudiante = resultados["estudiante"].get(id_franja)
@@ -4337,15 +4432,69 @@ async def _calcular_resultado_universitario(
             (resultado_estudiante or {}).get("ganadores_primera_vuelta", []),
         )
         ganadores_comunes = sorted(ganadores_docentes & ganadores_estudiantes)
-        por_franja[id_franja] = {
+        nombres_comunes = [
+            resultado_docente["candidatos"][id_candidato]["nombre"]
+            for id_candidato in ganadores_comunes
+            if id_candidato in resultado_docente["candidatos"]
+        ]
+        resumen = {
+            "modo_resultado": (
+                "segunda_vuelta_ponderada"
+                if es_segunda_vuelta
+                else "primera_vuelta_estamentaria"
+            ),
             "ganadores_primera_vuelta": ganadores_comunes,
-            "ganadores_nombres": [
-                resultado_docente["candidatos"][id_candidato]["nombre"]
-                for id_candidato in ganadores_comunes
-                if id_candidato in resultado_docente["candidatos"]
-            ],
+            "ganadores_nombres": nombres_comunes,
         }
-    return {"por_estamento": resultados, "por_franja": por_franja}
+        if es_segunda_vuelta:
+            habilitados = habilitados_por_franja.get(
+                id_franja,
+                {"docente": 0, "estudiante": 0},
+            )
+            ponderacion = _construir_ponderacion_reporte(
+                resumen_estamento(resultado_docente),
+                resumen_estamento(resultado_estudiante or {}),
+                base_ponderacion=base_ponderacion,
+                precision=precision_ponderacion,
+                habilitados_docentes=habilitados["docente"],
+                habilitados_estudiantes=habilitados["estudiante"],
+            )
+            candidatos_ponderados = ponderacion["candidatos"]
+            valores_disponibles = [
+                candidato["votos_ponderados"]
+                for candidato in candidatos_ponderados
+                if candidato["votos_ponderados"] is not None
+            ]
+            maximo_ponderado = max(valores_disponibles) if valores_disponibles else None
+            ganadores_ponderados = [
+                candidato
+                for candidato in candidatos_ponderados
+                if maximo_ponderado is not None
+                and candidato["votos_ponderados"] == maximo_ponderado
+            ]
+            resumen.update({
+                "base_ponderacion": ponderacion["base_ponderacion"],
+                "precision_ponderacion": precision_ponderacion,
+                "ponderacion": ponderacion,
+                "ganadores_ponderados": [
+                    candidato["id_candidato"]
+                    for candidato in ganadores_ponderados
+                ],
+                "ganadores_ponderados_nombres": [
+                    candidato["nombre"]
+                    for candidato in ganadores_ponderados
+                ],
+            })
+        por_franja[id_franja] = resumen
+    return {
+        "por_estamento": resultados,
+        "por_franja": por_franja,
+        "proceso": {
+            "es_segunda_vuelta": es_segunda_vuelta,
+            "base_ponderacion_segunda_vuelta": base_ponderacion,
+            "precision_ponderacion_segunda_vuelta": precision_ponderacion,
+        },
+    }
 
 
 def _nuevo_acumulador_reporte(franja: dict) -> dict:
@@ -4393,16 +4542,44 @@ def _finalizar_conteo_reporte(acumulador: dict, base_calculo: str) -> dict:
     }
 
 
-def _construir_ponderacion_reporte(docentes: dict, estudiantes: dict) -> dict:
+def _redondear_ponderacion(valor: float, precision: int) -> float:
+    """Redondea el factor y sus equivalencias de forma decimal predecible."""
+    unidad = Decimal("1").scaleb(-precision)
+    return float(Decimal(str(valor)).quantize(unidad, rounding=ROUND_HALF_UP))
+
+
+def _construir_ponderacion_reporte(
+    docentes: dict,
+    estudiantes: dict,
+    base_ponderacion: str = "votos_emitidos",
+    precision: int = 2,
+    habilitados_docentes: int = 0,
+    habilitados_estudiantes: int = 0,
+) -> dict:
     total_docentes = docentes["total_emitidos"]
     total_estudiantes = estudiantes["total_emitidos"]
+    if base_ponderacion == "votantes_habilitados":
+        total_base_docentes = habilitados_docentes
+        total_base_estudiantes = habilitados_estudiantes
+        etiqueta_base = "votantes habilitados"
+    else:
+        base_ponderacion = "votos_emitidos"
+        total_base_docentes = docentes["total_emitidos"]
+        total_base_estudiantes = estudiantes["total_emitidos"]
+        etiqueta_base = "votos emitidos"
     equivalencia = (
-        total_estudiantes / total_docentes
-        if total_docentes > 0 and total_estudiantes > 0
+        _redondear_ponderacion(
+            total_base_estudiantes / total_base_docentes,
+            precision,
+        )
+        if total_base_docentes > 0 and total_base_estudiantes > 0
         else None
     )
     base_ponderada = (
-        docentes["base_votos"] * equivalencia + estudiantes["base_votos"]
+        _redondear_ponderacion(
+            docentes["base_votos"] * equivalencia + estudiantes["base_votos"],
+            precision,
+        )
         if equivalencia is not None
         else None
     )
@@ -4421,10 +4598,15 @@ def _construir_ponderacion_reporte(docentes: dict, estudiantes: dict) -> dict:
         votos_docentes = docente["votos"]
         votos_estudiantes = estudiante.get("votos", 0)
         votos_docentes_equivalentes = (
-            votos_docentes * equivalencia if equivalencia is not None else None
+            _redondear_ponderacion(votos_docentes * equivalencia, precision)
+            if equivalencia is not None
+            else None
         )
         total_ponderado = (
-            votos_docentes_equivalentes + votos_estudiantes
+            _redondear_ponderacion(
+                votos_docentes_equivalentes + votos_estudiantes,
+                precision,
+            )
             if votos_docentes_equivalentes is not None
             else None
         )
@@ -4444,18 +4626,45 @@ def _construir_ponderacion_reporte(docentes: dict, estudiantes: dict) -> dict:
                 else None
             ),
         })
+    valores_disponibles = [
+        candidato["votos_ponderados"]
+        for candidato in candidatos_ponderados
+        if candidato["votos_ponderados"] is not None
+    ]
+    maximo_ponderado = max(valores_disponibles) if valores_disponibles else None
+    ganadores_ponderados = [
+        candidato
+        for candidato in candidatos_ponderados
+        if maximo_ponderado is not None
+        and candidato["votos_ponderados"] == maximo_ponderado
+    ]
     return {
         "regla": (
-            "Igual peso total por estamento; cada voto docente se convierte "
-            "según el cociente entre votos emitidos de estudiantes y docentes."
+            "Cada voto docente se convierte según el cociente entre "
+            f"{etiqueta_base} de estudiantes y docentes."
         ),
         "unidad": "votos estudiantiles equivalentes",
+        "base_ponderacion": base_ponderacion,
+        "precision_ponderacion": precision,
+        "total_base_docentes": total_base_docentes,
+        "total_base_estudiantes": total_base_estudiantes,
         "votos_emitidos_docentes": total_docentes,
         "votos_emitidos_estudiantes": total_estudiantes,
+        "votos_habilitados_docentes": habilitados_docentes,
+        "votos_habilitados_estudiantes": habilitados_estudiantes,
         "votos_estudiantes_por_voto_docente": equivalencia,
         "base_votos_ponderada": base_ponderada,
+        "ganadores_ponderados": [
+            candidato["id_candidato"]
+            for candidato in ganadores_ponderados
+        ],
+        "ganadores_ponderados_nombres": [
+            candidato["nombre"]
+            for candidato in ganadores_ponderados
+        ],
         "mensaje": (
-            "No se puede calcular la equivalencia hasta que ambos estamentos tengan votos emitidos."
+            "No se puede calcular el ponderado hasta que ambos estamentos tengan "
+            f"{etiqueta_base} mayores que cero."
             if equivalencia is None
             else None
         ),
@@ -4474,7 +4683,16 @@ async def generar_reportes_eleccion(
 ):
     proceso = await db.procesos_electorales.find_one(
         {"id_eleccion": id_eleccion},
-        {"_id": 0, "id_eleccion": 1, "nombre": 1, "tipo": 1, "papeletas": 1},
+        {
+            "_id": 0,
+            "id_eleccion": 1,
+            "nombre": 1,
+            "tipo": 1,
+            "papeletas": 1,
+            "es_segunda_vuelta": 1,
+            "base_ponderacion_segunda_vuelta": 1,
+            "precision_ponderacion_segunda_vuelta": 1,
+        },
     )
     if not proceso:
         raise HTTPException(404, "Proceso electoral no encontrado")
@@ -4487,6 +4705,9 @@ async def generar_reportes_eleccion(
             "numero_anfora": 1,
             "id_mesa": 1,
             "id_recinto": 1,
+            "id_papeletas": 1,
+            "cantidad_votantes": 1,
+            "tipo_mesa": 1,
             "path_ancestros": 1,
         },
     ).to_list(20000)
@@ -4540,16 +4761,24 @@ async def generar_reportes_eleccion(
         },
         {"_id": 0, "id": 1, "tipo_mesa": 1},
     ).to_list(20000)
+    mesas = await _sincronizar_tipo_mesa_legado(
+        id_eleccion,
+        mesas,
+        tipo_eleccion=proceso.get("tipo"),
+    )
     tipo_por_mesa = {mesa["id"]: mesa.get("tipo_mesa") for mesa in mesas}
     anforas_por_id = {anfora["id"]: anfora for anfora in anforas}
 
     franjas = {}
+    franjas_por_papeleta = {}
+    habilitados_por_franja = {}
     for papeleta in proceso.get("papeletas", []):
         for franja in papeleta.get("franjas", []):
             id_franja = franja["id_franja"]
+            id_papeleta = papeleta.get("id_papeleta")
             franjas[id_franja] = {
                 "id_franja": id_franja,
-                "id_papeleta": papeleta.get("id_papeleta"),
+                "id_papeleta": id_papeleta,
                 "nombre_papeleta": papeleta.get("nombre", ""),
                 "titulo": franja["titulo"],
                 "tipo_voto": franja.get("tipo_voto"),
@@ -4560,6 +4789,20 @@ async def generar_reportes_eleccion(
                     "estudiante": _nuevo_acumulador_reporte(franja),
                 } if proceso.get("tipo") == "universitaria" else None,
             }
+            franjas_por_papeleta.setdefault(id_papeleta, []).append(id_franja)
+            habilitados_por_franja[id_franja] = {"docente": 0, "estudiante": 0}
+
+    for anfora in anforas:
+        tipo_mesa = (
+            tipo_por_mesa.get(anfora.get("id_mesa"))
+            or anfora.get("tipo_mesa")
+        )
+        if tipo_mesa not in {"docente", "estudiante"}:
+            continue
+        cantidad_votantes = int(anfora.get("cantidad_votantes") or 0)
+        for id_papeleta in set(anfora.get("id_papeletas") or []):
+            for id_franja in franjas_por_papeleta.get(id_papeleta, []):
+                habilitados_por_franja[id_franja][tipo_mesa] += cantidad_votantes
 
     for acta in actas:
         id_anfora = acta.get("id_anfora")
@@ -4597,9 +4840,26 @@ async def generar_reportes_eleccion(
                 for tipo, acumulador in resultado["por_estamento"].items()
             }
             salida["por_estamento"] = estamentos
+            es_segunda_vuelta = bool(proceso.get("es_segunda_vuelta"))
+            habilitados = habilitados_por_franja.get(
+                resultado["id_franja"],
+                {"docente": 0, "estudiante": 0},
+            )
             salida["ponderacion"] = _construir_ponderacion_reporte(
                 estamentos["docente"],
                 estamentos["estudiante"],
+                base_ponderacion=(
+                    proceso.get("base_ponderacion_segunda_vuelta", "votos_emitidos")
+                    if es_segunda_vuelta
+                    else "votos_emitidos"
+                ),
+                precision=(
+                    int(proceso.get("precision_ponderacion_segunda_vuelta", 2))
+                    if es_segunda_vuelta
+                    else 2
+                ),
+                habilitados_docentes=habilitados["docente"],
+                habilitados_estudiantes=habilitados["estudiante"],
             )
         else:
             salida["por_estamento"] = None
@@ -4627,6 +4887,14 @@ async def generar_reportes_eleccion(
             "id_eleccion": proceso["id_eleccion"],
             "nombre": proceso.get("nombre", ""),
             "tipo": proceso.get("tipo", "nacional"),
+            "es_segunda_vuelta": bool(proceso.get("es_segunda_vuelta")),
+            "base_ponderacion_segunda_vuelta": proceso.get(
+                "base_ponderacion_segunda_vuelta",
+                "votos_emitidos",
+            ),
+            "precision_ponderacion_segunda_vuelta": int(
+                proceso.get("precision_ponderacion_segunda_vuelta", 2),
+            ),
         },
         "filtros": {
             "anforas_encontradas": len(anforas),
