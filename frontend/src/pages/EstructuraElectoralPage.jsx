@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useParams, Link } from "react-router-dom";
 import { api, formatearError } from "@/lib/api";
 import { ordenarMesasNumericamente } from "@/lib/sorting";
@@ -50,50 +50,123 @@ export default function EstructuraElectoralPage() {
   };
   useEffect(() => { cargar(); }, [id_eleccion]);
 
-  const raiz = estructura.nodos.filter((n) => !n.id_padre);
-  const hijosDe = (id) => estructura.nodos.filter((n) => n.id_padre === id).sort((a, b) => a.nombre_nodo.localeCompare(b.nombre_nodo));
-  const recintosDe = (id_nodo) => estructura.recintos.filter((r) => r.id_nodo_padre === id_nodo);
-
   const cargarMesas = async (id_recinto) => {
     const { data } = await api.get(`/procesos/${id_eleccion}/mesas?id_recinto=${id_recinto}`);
     setMesasRecinto((prev) => ({ ...prev, [id_recinto]: data }));
+    setEstructura((prev) => ({
+      ...prev,
+      recintos: prev.recintos.map((recinto) => (
+        recinto.id === id_recinto ? { ...recinto, total_mesas: data.length } : recinto
+      )),
+    }));
   };
 
   const toggle = (id) => setExpandidos((e) => ({ ...e, [id]: !e[id] }));
 
   const eliminarNodo = async (id) => {
     if (!window.confirm("¿Eliminar este nodo? Debe no tener hijos ni recintos")) return;
-    try { await api.delete(`/admin/procesos/${id_eleccion}/nodos/${id}`); toast.success("Nodo eliminado"); cargar(); }
+    try {
+      await api.delete(`/admin/procesos/${id_eleccion}/nodos/${id}`);
+      setEstructura((prev) => ({ ...prev, nodos: prev.nodos.filter((nodo) => nodo.id !== id) }));
+      toast.success("Nodo eliminado");
+    }
     catch (e) { toast.error(formatearError(e?.response?.data?.detail)); }
   };
   const marcarHoja = async (nodo) => {
     try {
       await api.post(`/admin/procesos/${id_eleccion}/nodos/${nodo.id}/marcar-hoja`, { es_hoja_configurada: !nodo.es_hoja_configurada });
+      setEstructura((prev) => ({
+        ...prev,
+        nodos: prev.nodos.map((item) => (
+          item.id === nodo.id ? { ...item, es_hoja_configurada: !nodo.es_hoja_configurada } : item
+        )),
+      }));
       toast.success(!nodo.es_hoja_configurada ? "Nodo marcado como último eslabón" : "Nodo desmarcado");
-      cargar();
     } catch (e) { toast.error(formatearError(e?.response?.data?.detail)); }
   };
   const eliminarRecinto = async (id) => {
     if (!window.confirm("¿Eliminar recinto? No debe tener mesas")) return;
-    try { await api.delete(`/admin/procesos/${id_eleccion}/recintos/${id}`); toast.success("Recinto eliminado"); cargar(); }
+    try {
+      await api.delete(`/admin/procesos/${id_eleccion}/recintos/${id}`);
+      setEstructura((prev) => ({ ...prev, recintos: prev.recintos.filter((recinto) => recinto.id !== id) }));
+      setMesasRecinto((prev) => {
+        const next = { ...prev };
+        delete next[id];
+        return next;
+      });
+      toast.success("Recinto eliminado");
+    }
     catch (e) { toast.error(formatearError(e?.response?.data?.detail)); }
   };
   const eliminarMesa = async (id_recinto, id_mesa) => {
     if (!window.confirm("¿Eliminar mesa?")) return;
-    try { await api.delete(`/admin/procesos/${id_eleccion}/mesas/${id_mesa}`); toast.success("Mesa eliminada"); cargarMesas(id_recinto); cargar(); }
+    try {
+      await api.delete(`/admin/procesos/${id_eleccion}/mesas/${id_mesa}`);
+      setMesasRecinto((prev) => ({
+        ...prev,
+        [id_recinto]: (prev[id_recinto] || []).filter((mesa) => mesa.id !== id_mesa),
+      }));
+      setEstructura((prev) => ({
+        ...prev,
+        recintos: prev.recintos.map((recinto) => (
+          recinto.id === id_recinto
+            ? { ...recinto, total_mesas: Math.max(0, (recinto.total_mesas || 0) - 1) }
+            : recinto
+        )),
+      }));
+      toast.success("Mesa eliminada");
+    }
     catch (e) { toast.error(formatearError(e?.response?.data?.detail)); }
   };
   const eliminarCampo = async (id) => {
     if (!window.confirm("¿Eliminar definición de campo?")) return;
-    try { await api.delete(`/admin/procesos/${id_eleccion}/campos-mesa/${id}`); toast.success("Campo eliminado"); cargar(); }
+    try {
+      await api.delete(`/admin/procesos/${id_eleccion}/campos-mesa/${id}`);
+      setEstructura((prev) => ({ ...prev, campos_mesa: prev.campos_mesa.filter((campo) => campo.id !== id) }));
+      toast.success("Campo eliminado");
+    }
     catch (e) { toast.error(formatearError(e?.response?.data?.detail)); }
   };
   const eliminarAnfora = async (id) => {
     if (!window.confirm("¿Eliminar ánfora?")) return;
-    try { await api.delete(`/admin/procesos/${id_eleccion}/anforas/${id}`); toast.success("Ánfora eliminada"); cargar(); }
+    try {
+      await api.delete(`/admin/procesos/${id_eleccion}/anforas/${id}`);
+      setEstructura((prev) => ({ ...prev, anforas: prev.anforas.filter((anfora) => anfora.id !== id) }));
+      toast.success("Ánfora eliminada");
+    }
     catch (e) { toast.error(formatearError(e?.response?.data?.detail)); }
   };
-  const anforasDeMesa = (id_mesa) => (estructura.anforas || []).filter((a) => a.id_mesa === id_mesa);
+  const nodosPorPadre = useMemo(() => {
+    const mapa = new Map();
+    for (const nodo of estructura.nodos) {
+      const clave = nodo.id_padre || null;
+      if (!mapa.has(clave)) mapa.set(clave, []);
+      mapa.get(clave).push(nodo);
+    }
+    for (const nodos of mapa.values()) nodos.sort((a, b) => a.nombre_nodo.localeCompare(b.nombre_nodo));
+    return mapa;
+  }, [estructura.nodos]);
+  const recintosPorNodo = useMemo(() => {
+    const mapa = new Map();
+    for (const recinto of estructura.recintos) {
+      if (!mapa.has(recinto.id_nodo_padre)) mapa.set(recinto.id_nodo_padre, []);
+      mapa.get(recinto.id_nodo_padre).push(recinto);
+    }
+    for (const recintos of mapa.values()) recintos.sort((a, b) => a.nombre.localeCompare(b.nombre));
+    return mapa;
+  }, [estructura.recintos]);
+  const anforasPorMesa = useMemo(() => {
+    const mapa = new Map();
+    for (const anfora of estructura.anforas || []) {
+      if (!mapa.has(anfora.id_mesa)) mapa.set(anfora.id_mesa, []);
+      mapa.get(anfora.id_mesa).push(anfora);
+    }
+    return mapa;
+  }, [estructura.anforas]);
+  const raiz = nodosPorPadre.get(null) || [];
+  const hijosDe = (id) => nodosPorPadre.get(id) || [];
+  const recintosDe = (id_nodo) => recintosPorNodo.get(id_nodo) || [];
+  const anforasDeMesa = (id_mesa) => anforasPorMesa.get(id_mesa) || [];
 
   const renderNodo = (nodo, nivel = 0) => {
     const abierto = expandidos[nodo.id];
@@ -316,10 +389,83 @@ export default function EstructuraElectoralPage() {
         </TabsContent>
       </Tabs>
 
-      {modalNodo && <ModalNodo id_eleccion={id_eleccion} data={modalNodo} onClose={() => setModalNodo(null)} onOk={() => { setModalNodo(null); cargar(); }} />}
-      {modalRecinto && <ModalRecinto id_eleccion={id_eleccion} data={modalRecinto} onClose={() => setModalRecinto(null)} onOk={() => { setModalRecinto(null); cargar(); }} />}
-      {modalCampo && <ModalCampoMesa id_eleccion={id_eleccion} data={modalCampo} onClose={() => setModalCampo(null)} onOk={() => { setModalCampo(null); cargar(); }} />}
-      {modalMesa && <ModalMesa id_eleccion={id_eleccion} data={modalMesa} campos={estructura.campos_mesa} tipoEleccion={estructura.tipo} onClose={() => setModalMesa(null)} onOk={(idR) => { setModalMesa(null); cargarMesas(idR); cargar(); }} />}
+      {modalNodo && (
+        <ModalNodo
+          id_eleccion={id_eleccion}
+          data={modalNodo}
+          onClose={() => setModalNodo(null)}
+          onOk={({ item, requiereRecarga }) => {
+            setModalNodo(null);
+            if (requiereRecarga) {
+              cargar();
+              return;
+            }
+            setEstructura((prev) => ({
+              ...prev,
+              nodos: [
+                ...prev.nodos
+                  .filter((nodo) => nodo.id !== item.id)
+                  .map((nodo) => (
+                    nodo.id === item.id_padre
+                      ? { ...nodo, es_hoja_configurada: false }
+                      : nodo
+                  )),
+                item,
+              ],
+            }));
+            if (item.id_padre) setExpandidos((prev) => ({ ...prev, [item.id_padre]: true }));
+          }}
+        />
+      )}
+      {modalRecinto && (
+        <ModalRecinto
+          id_eleccion={id_eleccion}
+          data={modalRecinto}
+          onClose={() => setModalRecinto(null)}
+          onOk={(item) => {
+            setModalRecinto(null);
+            setEstructura((prev) => ({
+              ...prev,
+              recintos: [
+                ...prev.recintos.filter((recinto) => recinto.id !== item.id),
+                { ...item, total_mesas: item.total_mesas || 0 },
+              ],
+            }));
+            setExpandidos((prev) => ({ ...prev, [item.id_nodo_padre]: true }));
+          }}
+        />
+      )}
+      {modalCampo && (
+        <ModalCampoMesa
+          id_eleccion={id_eleccion}
+          data={modalCampo}
+          onClose={() => setModalCampo(null)}
+          onOk={(item) => {
+            setModalCampo(null);
+            setEstructura((prev) => ({
+              ...prev,
+              campos_mesa: [
+                ...prev.campos_mesa.filter((campo) => campo.id !== item.id),
+                item,
+              ].sort((a, b) => a.orden - b.orden),
+            }));
+          }}
+        />
+      )}
+      {modalMesa && (
+        <ModalMesa
+          id_eleccion={id_eleccion}
+          data={modalMesa}
+          campos={estructura.campos_mesa}
+          tipoEleccion={estructura.tipo}
+          onClose={() => setModalMesa(null)}
+          onOk={(idR) => {
+            setModalMesa(null);
+            cargarMesas(idR);
+            setExpandidos((prev) => ({ ...prev, [`r-${idR}`]: true }));
+          }}
+        />
+      )}
       {modalAnfora && (
         <ModalAnfora
           id_eleccion={id_eleccion}
@@ -327,9 +473,16 @@ export default function EstructuraElectoralPage() {
           papeletas={estructura.papeletas || []}
           anforasMismaMesa={anforasDeMesa(modalAnfora.id_mesa)}
           onClose={() => setModalAnfora(null)}
-          onOk={() => {
+          onOk={(item) => {
             setModalAnfora(null);
-            cargar();
+            setEstructura((prev) => ({
+              ...prev,
+              anforas: [
+                ...(prev.anforas || []).filter((anfora) => anfora.id !== item.id),
+                item,
+              ],
+            }));
+            setExpandidos((prev) => ({ ...prev, [`m-${item.id_mesa}`]: true }));
           }}
         />
       )}
@@ -373,22 +526,30 @@ function ModalAnfora({
   const guardar = async () => {
     setEnviando(true);
     try {
+      const payload = {
+        numero_anfora: form.numero_anfora,
+        nombre: form.nombre,
+        cantidad_votantes: cantidadIngresada ? Number(form.cantidad_votantes) : null,
+        id_papeletas: form.id_papeletas,
+        color_hex: form.color_hex,
+      };
+      let item;
       if (editar) {
-        await api.put(`/admin/procesos/${id_eleccion}/anforas/${editar.id}`, {
-          numero_anfora: form.numero_anfora,
-          nombre: form.nombre,
-          cantidad_votantes: cantidadIngresada ? Number(form.cantidad_votantes) : null,
-          id_papeletas: form.id_papeletas,
-          color_hex: form.color_hex,
-        });
+        await api.put(`/admin/procesos/${id_eleccion}/anforas/${editar.id}`, payload);
+        item = {
+          ...editar,
+          ...payload,
+          cantidad_votantes: payload.cantidad_votantes ?? editar.cantidad_votantes,
+        };
       } else {
-        await api.post(`/admin/procesos/${id_eleccion}/anforas`, {
+        const { data: creada } = await api.post(`/admin/procesos/${id_eleccion}/anforas`, {
           ...form,
           cantidad_votantes: Number(form.cantidad_votantes),
         });
+        item = creada;
       }
       toast.success(editar ? "Ánfora actualizada" : "Ánfora creada");
-      onOk();
+      onOk(item);
     } catch (e) { toast.error(formatearError(e?.response?.data?.detail)); }
     finally { setEnviando(false); }
   };
@@ -478,15 +639,26 @@ function ModalNodo({ id_eleccion, data, onClose, onOk }) {
   const guardar = async () => {
     setEnviando(true);
     try {
+      const datosNodo = {
+        nombre_nivel: form.nombre_nivel,
+        nombre_nodo: form.nombre_nodo,
+        codigo: form.codigo,
+      };
+      let item;
+      let requiereRecarga = false;
       if (editar) {
-        await api.put(`/admin/procesos/${id_eleccion}/nodos/${editar.id}`, {
-          nombre_nivel: form.nombre_nivel, nombre_nodo: form.nombre_nodo, codigo: form.codigo
-        });
+        await api.put(`/admin/procesos/${id_eleccion}/nodos/${editar.id}`, datosNodo);
+        item = { ...editar, ...datosNodo };
+        requiereRecarga = (
+          editar.nombre_nivel !== form.nombre_nivel
+          || editar.nombre_nodo !== form.nombre_nodo
+        );
       } else {
-        await api.post(`/admin/procesos/${id_eleccion}/nodos`, form);
+        const { data: creado } = await api.post(`/admin/procesos/${id_eleccion}/nodos`, form);
+        item = creado;
       }
       toast.success(editar ? "Nodo actualizado" : "Nodo creado");
-      onOk();
+      onOk({ item, requiereRecarga });
     } catch (e) { toast.error(formatearError(e?.response?.data?.detail)); }
     finally { setEnviando(false); }
   };
@@ -526,15 +698,21 @@ function ModalRecinto({ id_eleccion, data, onClose, onOk }) {
   const guardar = async () => {
     setEnviando(true);
     try {
+      const payload = {
+        nombre: form.nombre,
+        codigo: form.codigo,
+        direccion: form.direccion,
+      };
+      let item;
       if (editar) {
-        await api.put(`/admin/procesos/${id_eleccion}/recintos/${editar.id}`, {
-          nombre: form.nombre, codigo: form.codigo, direccion: form.direccion
-        });
+        await api.put(`/admin/procesos/${id_eleccion}/recintos/${editar.id}`, payload);
+        item = { ...editar, ...payload };
       } else {
-        await api.post(`/admin/procesos/${id_eleccion}/recintos`, form);
+        const { data: creado } = await api.post(`/admin/procesos/${id_eleccion}/recintos`, form);
+        item = creado;
       }
       toast.success(editar ? "Recinto actualizado" : "Recinto creado");
-      onOk();
+      onOk(item);
     } catch (e) { toast.error(formatearError(e?.response?.data?.detail)); }
     finally { setEnviando(false); }
   };
@@ -575,10 +753,16 @@ function ModalCampoMesa({ id_eleccion, data, onClose, onOk }) {
     setEnviando(true);
     try {
       const payload = { ...form, opciones: form.tipo_dato === "seleccion" ? opcionesTxt.split(",").map((s) => s.trim()).filter(Boolean) : [] };
-      if (editar) await api.put(`/admin/procesos/${id_eleccion}/campos-mesa/${editar.id}`, payload);
-      else await api.post(`/admin/procesos/${id_eleccion}/campos-mesa`, payload);
+      let item;
+      if (editar) {
+        await api.put(`/admin/procesos/${id_eleccion}/campos-mesa/${editar.id}`, payload);
+        item = { ...editar, ...payload };
+      } else {
+        const { data: creado } = await api.post(`/admin/procesos/${id_eleccion}/campos-mesa`, payload);
+        item = creado;
+      }
       toast.success(editar ? "Campo actualizado" : "Campo creado");
-      onOk();
+      onOk(item);
     } catch (e) { toast.error(formatearError(e?.response?.data?.detail)); }
     finally { setEnviando(false); }
   };

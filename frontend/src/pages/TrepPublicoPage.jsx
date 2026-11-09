@@ -117,6 +117,14 @@ export default function TrepPublicoPage() {
   const anforas = useMemo(() => ordenarAnforasNumericamente(
     (localizador?.actas || []).filter((acta) => anforasIdsFiltradas.has(acta.id_anfora)),
   ), [anforasIdsFiltradas, localizador]);
+  const mesasPorId = useMemo(
+    () => new Map((localizador?.mesas || []).map((mesa) => [mesa.id, mesa])),
+    [localizador],
+  );
+  const recintosPorId = useMemo(
+    () => new Map((localizador?.recintos || []).map((recinto) => [recinto.id, recinto])),
+    [localizador],
+  );
 
   const seleccionarNodo = (indice, idNodo) => {
     setRutaNodos((anterior) => [...anterior.slice(0, indice), idNodo]);
@@ -257,8 +265,8 @@ export default function TrepPublicoPage() {
               </header>
               <div className="max-h-[720px] divide-y divide-slate-200 overflow-y-auto">
                 {anforas.map((anfora) => {
-                  const mesa = (localizador?.mesas || []).find((item) => item.id === anfora.id_mesa);
-                  const recinto = (localizador?.recintos || []).find((item) => item.id === anfora.id_recinto);
+                  const mesa = mesasPorId.get(anfora.id_mesa);
+                  const recinto = recintosPorId.get(anfora.id_recinto);
                   const tipoVoto = nombreTipoVoto[mesa?.tipo_mesa];
                   const idActa = anfora.id_acta || anfora.id;
                   const activa = anforaSeleccionadaId === idActa;

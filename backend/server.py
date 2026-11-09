@@ -13,6 +13,7 @@ import json
 import logging
 import base64
 import asyncio
+import time
 import requests
 import re
 import unicodedata
@@ -68,6 +69,9 @@ _RESULTADOS_PUBLICOS_TTL_SEGUNDOS = 10
 _resultados_publicos_cache: dict[tuple[str, str, str], tuple[float, dict]] = {}
 _resultados_publicos_versiones: dict[str, int] = {}
 _resultados_publicos_locks: dict[tuple[str, str, str], asyncio.Lock] = {}
+_LOCALIZADOR_PUBLICO_TTL_SEGUNDOS = 8
+_localizador_publico_cache: dict[str, tuple[float, dict]] = {}
+_localizador_publico_locks: dict[str, asyncio.Lock] = {}
 
 
 def _invalidar_cache_resultados_publicos(id_eleccion: str) -> None:
@@ -76,6 +80,7 @@ def _invalidar_cache_resultados_publicos(id_eleccion: str) -> None:
     _resultados_publicos_versiones[id_eleccion] = (
         _resultados_publicos_versiones.get(id_eleccion, 0) + 1
     )
+    _localizador_publico_cache.pop(id_eleccion, None)
 
 
 class GestorResultadosEnVivo:
@@ -2662,80 +2667,103 @@ async def listar_procesos_publicos():
     ).sort("fecha_eleccion", -1).to_list(500)
 
 
-@api.get("/publico/procesos/{id_eleccion}/localizador")
-async def localizador_publico_actas(id_eleccion: str):
-    proceso = await db.procesos_electorales.find_one(
-        {"id_eleccion": id_eleccion, "activo": True},
-        {"_id": 0},
+async def _generar_localizador_publico_actas(id_eleccion: str) -> dict:
+    proceso, documentos_actas, anforas_estructura = await asyncio.gather(
+        db.procesos_electorales.find_one(
+            {"id_eleccion": id_eleccion, "activo": True},
+            {"_id": 0, "papeletas": 1, "tipo": 1},
+        ),
+        db.actas.find(
+            {
+                "id_eleccion": id_eleccion,
+                "id_anfora": {"$exists": True, "$ne": None},
+                "esta_bloqueada": True,
+            },
+            {
+                "_id": 0,
+                "id": 1,
+                "id_anfora": 1,
+                "id_mesa": 1,
+                "id_franja": 1,
+                "actualizado_en": 1,
+                "conteos.id_franja": 1,
+            },
+        ).sort("actualizado_en", -1).to_list(20000),
+        db.anforas_mesa.find(
+            {"id_eleccion": id_eleccion},
+            {
+                "_id": 0,
+                "id": 1,
+                "id_mesa": 1,
+                "id_recinto": 1,
+                "numero_anfora": 1,
+                "nombre": 1,
+                "path_ancestros": 1,
+            },
+        ).to_list(20000),
     )
     if not proceso:
         raise HTTPException(404, "Elección pública no encontrada")
-    documentos_actas = await db.actas.find(
-        {
-            "id_eleccion": id_eleccion,
-            "id_anfora": {"$exists": True, "$ne": None},
-            "esta_bloqueada": True,
-        },
-        {"_id": 0},
-    ).sort("actualizado_en", -1).to_list(20000)
     actas = _actas_unicas_por_anfora(documentos_actas, proceso)
     ids_anfora = list({acta["id_anfora"] for acta in actas})
-    anforas = await db.anforas_mesa.find(
-        {"id_eleccion": id_eleccion, "id": {"$in": ids_anfora}},
-        {
-            "_id": 0,
-            "id": 1,
-            "id_mesa": 1,
-            "id_recinto": 1,
-            "numero_anfora": 1,
-            "nombre": 1,
-            "path_ancestros": 1,
-        },
-    ).to_list(20000)
+    anforas_por_id = {anfora["id"]: anfora for anfora in anforas_estructura}
+    anforas = [
+        anforas_por_id[id_anfora]
+        for id_anfora in ids_anfora
+        if id_anfora in anforas_por_id
+    ]
     anforas.sort(key=_clave_orden_anfora)
-    anforas_estructura = await db.anforas_mesa.find(
-        {"id_eleccion": id_eleccion},
-        {"_id": 0, "id_mesa": 1, "id_recinto": 1, "tipo_mesa": 1},
-    ).to_list(20000)
     ids_mesa = list({
         anfora["id_mesa"] for anfora in anforas_estructura if anfora.get("id_mesa")
     })
     ids_recinto = list({
         anfora["id_recinto"] for anfora in anforas_estructura if anfora.get("id_recinto")
     })
-    mesas = await db.mesas_sufragio.find(
-        {"id_eleccion": id_eleccion, "id": {"$in": ids_mesa}},
-        {"_id": 0, "id": 1, "id_recinto": 1, "numero_mesa": 1, "tipo_mesa": 1, "path_ancestros": 1},
-    ).to_list(20000)
-    actas_estructura = await db.actas.find(
-        {"id_eleccion": id_eleccion, "id_mesa": {"$in": ids_mesa}},
-        {"_id": 0, "id_mesa": 1, "tipo_mesa": 1},
-    ).to_list(20000)
-    tipos_legacy_por_mesa = {}
-    for registro in [*anforas_estructura, *actas_estructura]:
-        tipo = registro.get("tipo_mesa")
-        id_mesa = registro.get("id_mesa")
-        if id_mesa and tipo in {"docente", "estudiante"}:
-            tipos_legacy_por_mesa.setdefault(id_mesa, set()).add(tipo)
-    for mesa in mesas:
-        if mesa.get("tipo_mesa") not in {"docente", "estudiante"}:
-            tipos_legacy = tipos_legacy_por_mesa.get(mesa["id"], set())
-            mesa["tipo_mesa"] = next(iter(tipos_legacy)) if len(tipos_legacy) == 1 else None
+    ids_nodo_por_ruta = {
+        ancestro.get("id")
+        for anfora in anforas_estructura
+        for ancestro in anfora.get("path_ancestros", [])
+        if ancestro.get("id")
+    }
+    mesas, recintos, nodos = await asyncio.gather(
+        db.mesas_sufragio.find(
+            {"id_eleccion": id_eleccion, "id": {"$in": ids_mesa}},
+            {
+                "_id": 0,
+                "id": 1,
+                "id_recinto": 1,
+                "numero_mesa": 1,
+                "tipo_mesa": 1,
+                "path_ancestros": 1,
+            },
+        ).to_list(20000),
+        db.recintos_electorales.find(
+            {"id_eleccion": id_eleccion, "id": {"$in": ids_recinto}},
+            {"_id": 0, "id": 1, "id_nodo_padre": 1, "nombre": 1, "path_ancestros": 1},
+        ).to_list(5000),
+        db.nodos_jerarquicos.find(
+            {"id_eleccion": id_eleccion, "id": {"$in": list(ids_nodo_por_ruta)}},
+            {"_id": 0, "id": 1, "id_padre": 1, "nombre_nivel": 1, "nombre_nodo": 1},
+        ).to_list(5000),
+    )
+    mesas = await _sincronizar_tipo_mesa_legado(
+        id_eleccion,
+        mesas,
+        tipo_eleccion=proceso.get("tipo"),
+    )
     mesas.sort(key=_clave_orden_mesa)
     mesas_por_id = {mesa["id"]: mesa for mesa in mesas}
-    recintos = await db.recintos_electorales.find(
-        {"id_eleccion": id_eleccion, "id": {"$in": ids_recinto}},
-        {"_id": 0, "id": 1, "id_nodo_padre": 1, "nombre": 1, "path_ancestros": 1},
-    ).to_list(5000)
-    ids_nodo = set()
+    ids_nodo_faltantes = set()
     for recinto in recintos:
-        ids_nodo.add(recinto.get("id_nodo_padre"))
-        ids_nodo.update(nodo.get("id") for nodo in recinto.get("path_ancestros", []))
-    nodos = await db.nodos_jerarquicos.find(
-        {"id_eleccion": id_eleccion, "id": {"$in": list(ids_nodo - {None})}},
-        {"_id": 0, "id": 1, "id_padre": 1, "nombre_nivel": 1, "nombre_nodo": 1},
-    ).to_list(5000)
-    anforas_por_id = {anfora["id"]: anfora for anfora in anforas}
+        ids_nodo_faltantes.add(recinto.get("id_nodo_padre"))
+        ids_nodo_faltantes.update(ancestro.get("id") for ancestro in recinto.get("path_ancestros", []))
+    ids_nodo_existentes = {nodo["id"] for nodo in nodos}
+    ids_nodo_faltantes = (ids_nodo_faltantes - ids_nodo_existentes) - {None}
+    if ids_nodo_faltantes:
+        nodos.extend(await db.nodos_jerarquicos.find(
+            {"id_eleccion": id_eleccion, "id": {"$in": list(ids_nodo_faltantes)}},
+            {"_id": 0, "id": 1, "id_padre": 1, "nombre_nivel": 1, "nombre_nodo": 1},
+        ).to_list(5000))
     mapa_franjas = _mapa_franjas_proceso(proceso)
     actas_publicas = []
     for acta in actas:
@@ -2763,6 +2791,36 @@ async def localizador_publico_actas(id_eleccion: str):
         "anforas": anforas,
         "actas": actas_publicas,
     }
+
+
+@api.get("/publico/procesos/{id_eleccion}/localizador")
+async def localizador_publico_actas(id_eleccion: str):
+    ahora = time.monotonic()
+    cacheado = _localizador_publico_cache.get(id_eleccion)
+    if cacheado and cacheado[0] > ahora:
+        return cacheado[1]
+
+    bloqueo = _localizador_publico_locks.setdefault(id_eleccion, asyncio.Lock())
+    async with bloqueo:
+        ahora = time.monotonic()
+        cacheado = _localizador_publico_cache.get(id_eleccion)
+        if cacheado and cacheado[0] > ahora:
+            return cacheado[1]
+
+        version = _resultados_publicos_versiones.get(id_eleccion, 0)
+        datos = await _generar_localizador_publico_actas(id_eleccion)
+        if _resultados_publicos_versiones.get(id_eleccion, 0) == version:
+            _localizador_publico_cache[id_eleccion] = (
+                time.monotonic() + _LOCALIZADOR_PUBLICO_TTL_SEGUNDOS,
+                datos,
+            )
+        vencidas = [
+            clave for clave, (vence, _) in _localizador_publico_cache.items()
+            if vence <= time.monotonic()
+        ]
+        for clave in vencidas:
+            _localizador_publico_cache.pop(clave, None)
+        return datos
 
 
 @api.get("/publico/procesos/{id_eleccion}/actas/{id_anfora}")
@@ -3452,55 +3510,50 @@ async def _validar_tipo_mesa_mesa(id_eleccion: str, tipo_mesa: Optional[str]) ->
     return es_universitaria
 
 
-async def _sincronizar_tipo_mesa_legado(id_eleccion: str, mesas: list[dict]) -> list[dict]:
-    """Migra clasificaciones antiguas de ánforas/actas a su mesa cuando no hay conflicto."""
+async def _sincronizar_tipo_mesa_legado(
+    id_eleccion: str,
+    mesas: list[dict],
+    tipo_eleccion: Optional[str] = None,
+) -> list[dict]:
+    """Resuelve clasificaciones históricas en memoria, sin escrituras durante una consulta."""
     if not mesas:
         return mesas
-    proceso = await db.procesos_electorales.find_one(
-        {"id_eleccion": id_eleccion},
-        {"_id": 0, "tipo": 1},
-    )
-    if not proceso or proceso.get("tipo") != "universitaria":
+    mesas_pendientes = [
+        mesa for mesa in mesas
+        if mesa.get("tipo_mesa") not in {"docente", "estudiante"}
+    ]
+    if not mesas_pendientes:
+        return mesas
+    if tipo_eleccion is None:
+        proceso = await db.procesos_electorales.find_one(
+            {"id_eleccion": id_eleccion},
+            {"_id": 0, "tipo": 1},
+        )
+        tipo_eleccion = (proceso or {}).get("tipo")
+    if tipo_eleccion != "universitaria":
         return mesas
 
-    ids_mesa = [mesa["id"] for mesa in mesas]
-    anforas = await db.anforas_mesa.find(
-        {"id_eleccion": id_eleccion, "id_mesa": {"$in": ids_mesa}},
-        {"_id": 0, "id_mesa": 1, "tipo_mesa": 1},
-    ).to_list(20000)
-    actas = await db.actas.find(
-        {"id_eleccion": id_eleccion, "id_mesa": {"$in": ids_mesa}},
-        {"_id": 0, "id_mesa": 1, "tipo_mesa": 1},
-    ).to_list(20000)
+    ids_mesa = [mesa["id"] for mesa in mesas_pendientes]
+    anforas, actas = await asyncio.gather(
+        db.anforas_mesa.find(
+            {"id_eleccion": id_eleccion, "id_mesa": {"$in": ids_mesa}},
+            {"_id": 0, "id_mesa": 1, "tipo_mesa": 1},
+        ).to_list(20000),
+        db.actas.find(
+            {"id_eleccion": id_eleccion, "id_mesa": {"$in": ids_mesa}},
+            {"_id": 0, "id_mesa": 1, "tipo_mesa": 1},
+        ).to_list(20000),
+    )
     valores_por_mesa: dict[str, set[str]] = {}
     for registro in [*anforas, *actas]:
         tipo = registro.get("tipo_mesa")
         if tipo in {"docente", "estudiante"}:
             valores_por_mesa.setdefault(registro["id_mesa"], set()).add(tipo)
 
-    mesas_resueltas = []
-    for mesa in mesas:
-        tipo_mesa = mesa.get("tipo_mesa")
-        if tipo_mesa not in {"docente", "estudiante"}:
-            valores_anteriores = valores_por_mesa.get(mesa["id"], set())
-            if len(valores_anteriores) != 1:
-                continue
-            tipo_mesa = next(iter(valores_anteriores))
-            await db.mesas_sufragio.update_one(
-                {"id": mesa["id"], "id_eleccion": id_eleccion},
-                {"$set": {"tipo_mesa": tipo_mesa}},
-            )
-            mesa["tipo_mesa"] = tipo_mesa
-        mesas_resueltas.append(mesa["id"])
-        await db.actas.update_many(
-            {"id_eleccion": id_eleccion, "id_mesa": mesa["id"]},
-            {"$set": {"tipo_mesa": tipo_mesa}},
-        )
-    if mesas_resueltas:
-        await db.anforas_mesa.update_many(
-            {"id_eleccion": id_eleccion, "id_mesa": {"$in": mesas_resueltas}},
-            {"$unset": {"tipo_mesa": ""}},
-        )
+    for mesa in mesas_pendientes:
+        valores_anteriores = valores_por_mesa.get(mesa["id"], set())
+        if len(valores_anteriores) == 1:
+            mesa["tipo_mesa"] = next(iter(valores_anteriores))
     return mesas
 
 async def _armar_path_desde_padre(id_eleccion: str, id_padre: Optional[str]) -> tuple[list, str, int]:
@@ -4697,7 +4750,19 @@ async def listar_mesas(
             if "=" in par:
                 k, v = par.split("=", 1)
                 q[f"metadatos.{k.strip()}"] = v.strip()
-    mesas = await db.mesas_sufragio.find(q, {"_id": 0}).to_list(20000)
+    mesas = await db.mesas_sufragio.find(
+        q,
+        {
+            "_id": 0,
+            "id": 1,
+            "id_eleccion": 1,
+            "id_recinto": 1,
+            "numero_mesa": 1,
+            "codigo": 1,
+            "tipo_mesa": 1,
+            "metadatos": 1,
+        },
+    ).to_list(20000)
     mesas = await _sincronizar_tipo_mesa_legado(id_eleccion, mesas)
     mesas.sort(key=_clave_orden_mesa)
     return mesas
@@ -4709,25 +4774,53 @@ async def listar_campos_mesa(id_eleccion: str, usuario: dict = Depends(requerir_
 
 @api.get("/procesos/{id_eleccion}/estructura")
 async def obtener_estructura_completa(id_eleccion: str, admin: dict = Depends(requerir_admin)):
-    """Devuelve el árbol jerárquico completo + recintos + conteo de mesas por recinto y nodo."""
-    await _validar_proceso(id_eleccion)
-    nodos = await db.nodos_jerarquicos.find({"id_eleccion": id_eleccion}, {"_id": 0}).to_list(5000)
-    recintos = await db.recintos_electorales.find({"id_eleccion": id_eleccion}, {"_id": 0}).to_list(5000)
-    conteo_mesas_por_recinto = {}
-    async for doc in db.mesas_sufragio.aggregate([
-        {"$match": {"id_eleccion": id_eleccion}},
-        {"$group": {"_id": "$id_recinto", "total": {"$sum": 1}}},
-    ]):
-        conteo_mesas_por_recinto[doc["_id"]] = doc["total"]
+    """Devuelve la estructura con consultas paralelas para reducir la espera inicial."""
+    nodos, recintos, conteos_recintos, campos, anforas, proc = await asyncio.gather(
+        db.nodos_jerarquicos.find(
+            {"id_eleccion": id_eleccion},
+            {"_id": 0},
+        ).to_list(5000),
+        db.recintos_electorales.find(
+            {"id_eleccion": id_eleccion},
+            {"_id": 0},
+        ).to_list(5000),
+        db.mesas_sufragio.aggregate([
+            {"$match": {"id_eleccion": id_eleccion}},
+            {"$group": {"_id": "$id_recinto", "total": {"$sum": 1}}},
+        ]).to_list(5000),
+        db.definiciones_campo_mesa.find(
+            {"id_eleccion": id_eleccion},
+            {"_id": 0},
+        ).sort("orden", 1).to_list(500),
+        db.anforas_mesa.find(
+            {"id_eleccion": id_eleccion},
+            {
+                "_id": 0,
+                "id": 1,
+                "id_eleccion": 1,
+                "id_mesa": 1,
+                "id_recinto": 1,
+                "numero_anfora": 1,
+                "nombre": 1,
+                "cantidad_votantes": 1,
+                "id_papeletas": 1,
+                "color_hex": 1,
+            },
+        ).to_list(20000),
+        db.procesos_electorales.find_one(
+            {"id_eleccion": id_eleccion},
+            {"_id": 0, "papeletas": 1, "tipo": 1},
+        ),
+    )
+    if not proc:
+        raise HTTPException(404, "Proceso electoral no encontrado")
+    conteo_mesas_por_recinto = {
+        doc["_id"]: doc["total"]
+        for doc in conteos_recintos
+    }
     for r in recintos:
         r["total_mesas"] = conteo_mesas_por_recinto.get(r["id"], 0)
-    campos = await db.definiciones_campo_mesa.find({"id_eleccion": id_eleccion}, {"_id": 0}).sort("orden", 1).to_list(500)
-    anforas = await db.anforas_mesa.find({"id_eleccion": id_eleccion}, {"_id": 0}).to_list(20000)
     anforas.sort(key=_clave_orden_anfora)
-    proc = await db.procesos_electorales.find_one(
-        {"id_eleccion": id_eleccion},
-        {"_id": 0, "papeletas": 1, "tipo": 1},
-    )
     papeletas_proc = (proc or {}).get("papeletas", [])
     return {
         "nodos": nodos,

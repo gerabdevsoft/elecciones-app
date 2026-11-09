@@ -62,14 +62,14 @@ export default function ResultadosPage() {
 
   const cargar = useCallback(async () => {
     if (!procesoActivo) return;
-    const { data: estadoActual } = await api.get(
-      `/procesos/${procesoActivo.id_eleccion}/estado-resultados`,
-    );
-    setEstado(estadoActual);
-    const ruta = estadoActual.proceso.tipo === "universitaria"
+    const ruta = procesoActivo.tipo === "universitaria"
       ? `/procesos/${procesoActivo.id_eleccion}/resultado-universitario`
       : `/resumen/${procesoActivo.id_eleccion}`;
-    const { data } = await api.get(ruta);
+    const [{ data: estadoActual }, { data }] = await Promise.all([
+      api.get(`/procesos/${procesoActivo.id_eleccion}/estado-resultados`),
+      api.get(ruta),
+    ]);
+    setEstado(estadoActual);
     setConsolidado(data);
   }, [procesoActivo]);
 
