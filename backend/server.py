@@ -63,6 +63,7 @@ db = mongo_client[DB_NAME]
 app = FastAPI(title="STRE - Backend Electoral", version="1.0.0")
 api = APIRouter(prefix="/api")
 
+# La caché es breve y cada aviso de consolidación la invalida de inmediato.
 _RESULTADOS_PUBLICOS_TTL_SEGUNDOS = 10
 _resultados_publicos_cache: dict[str, tuple[float, dict]] = {}
 _resultados_publicos_versiones: dict[str, int] = {}
@@ -2493,7 +2494,21 @@ async def _generar_resultados_publicos(id_eleccion: str) -> dict:
         "porcentaje_escrutadas": porcentaje(escrutadas),
         "porcentaje_faltantes": porcentaje(faltantes),
     }
-    consolidado["actas_recientes"] = actas_unicas[:10]
+    consolidado["actas_recientes"] = [
+        {
+            campo: acta.get(campo)
+            for campo in (
+                "id",
+                "id_anfora",
+                "numero_anfora",
+                "recinto",
+                "ambiente",
+                "tipo_mesa",
+                "actualizado_en",
+            )
+        }
+        for acta in actas_unicas[:10]
+    ]
     if proceso.get("tipo") == "universitaria":
         consolidado["universitario"] = await _calcular_resultado_universitario(
             id_eleccion,
@@ -3587,11 +3602,17 @@ async def obtener_localizador_anforas(
     }
 
 
-async def _calcular_resultado_universitario(id_eleccion: str) -> dict:
-    proceso = await db.procesos_electorales.find_one(
-        {"id_eleccion": id_eleccion},
-        {"_id": 0, "tipo": 1, "papeletas": 1},
-    )
+async def _calcular_resultado_universitario(
+    id_eleccion: str,
+    proceso: Optional[dict] = None,
+    actas: Optional[List[dict]] = None,
+    solo_lectura: bool = False,
+) -> dict:
+    if proceso is None:
+        proceso = await db.procesos_electorales.find_one(
+            {"id_eleccion": id_eleccion},
+            {"_id": 0, "tipo": 1, "papeletas": 1},
+        )
     if not proceso:
         raise HTTPException(404, "Proceso electoral no encontrado")
     if proceso.get("tipo") != "universitaria":
@@ -3601,17 +3622,47 @@ async def _calcular_resultado_universitario(id_eleccion: str) -> dict:
     for papeleta in proceso.get("papeletas", []):
         for franja in papeleta.get("franjas", []):
             franjas[franja["id_franja"]] = franja
-    actas = await db.actas.find(
-        {"id_eleccion": id_eleccion, "esta_bloqueada": True},
-        {"_id": 0, "id_anfora": 1, "id_mesa": 1, "tipo_mesa": 1, "conteos": 1},
-    ).sort("actualizado_en", -1).to_list(20000)
+    if actas is None:
+        actas = await db.actas.find(
+            {"id_eleccion": id_eleccion, "esta_bloqueada": True},
+            {"_id": 0, "id_anfora": 1, "id_mesa": 1, "tipo_mesa": 1, "conteos": 1, "esta_bloqueada": 1, "actualizado_en": 1},
+        ).sort("actualizado_en", -1).to_list(20000)
     actas = _actas_unicas_por_anfora(actas)
     ids_mesa = list({acta.get("id_mesa") for acta in actas if acta.get("id_mesa")})
     mesas = await db.mesas_sufragio.find(
         {"id_eleccion": id_eleccion, "id": {"$in": ids_mesa}},
-        {"_id": 0},
+        {"_id": 0, "id": 1, "tipo_mesa": 1},
     ).to_list(20000)
-    mesas = await _sincronizar_tipo_mesa_legado(id_eleccion, mesas)
+    if solo_lectura:
+        tipos_legados_por_mesa: dict[str, set[str]] = {}
+        mesas_sin_tipo = [
+            mesa["id"]
+            for mesa in mesas
+            if mesa.get("tipo_mesa") not in {"docente", "estudiante"}
+        ]
+        if mesas_sin_tipo:
+            anforas_legadas, actas_legadas = await asyncio.gather(
+                db.anforas_mesa.find(
+                    {"id_eleccion": id_eleccion, "id_mesa": {"$in": mesas_sin_tipo}},
+                    {"_id": 0, "id_mesa": 1, "tipo_mesa": 1},
+                ).to_list(20000),
+                db.actas.find(
+                    {"id_eleccion": id_eleccion, "id_mesa": {"$in": mesas_sin_tipo}},
+                    {"_id": 0, "id_mesa": 1, "tipo_mesa": 1},
+                ).to_list(20000),
+            )
+            for registro in [*anforas_legadas, *actas_legadas]:
+                tipo = registro.get("tipo_mesa")
+                id_mesa = registro.get("id_mesa")
+                if id_mesa and tipo in {"docente", "estudiante"}:
+                    tipos_legados_por_mesa.setdefault(id_mesa, set()).add(tipo)
+        for mesa in mesas:
+            if mesa.get("tipo_mesa") not in {"docente", "estudiante"}:
+                tipos = tipos_legados_por_mesa.get(mesa["id"], set())
+                if len(tipos) == 1:
+                    mesa["tipo_mesa"] = next(iter(tipos))
+    else:
+        mesas = await _sincronizar_tipo_mesa_legado(id_eleccion, mesas)
     tipo_por_mesa = {mesa["id"]: mesa.get("tipo_mesa") for mesa in mesas}
     resultados = {}
     for tipo_mesa in ("docente", "estudiante"):
@@ -4177,6 +4228,12 @@ async def al_iniciar():
     await db.procesos_electorales.create_index("id_eleccion", unique=True)
     await db.actas.create_index("id_eleccion")
     await db.actas.create_index("numero_anfora")
+    # Acelera el filtro de actas bloqueadas y su orden por fecha de actualización.
+    await db.actas.create_index([
+        ("id_eleccion", 1),
+        ("esta_bloqueada", 1),
+        ("actualizado_en", -1),
+    ])
     # Fase 2: índices para árbol jerárquico y agregaciones NoSQL
     await db.nodos_jerarquicos.create_index([("id_eleccion", 1), ("id_padre", 1)])
     await db.nodos_jerarquicos.create_index([("id_eleccion", 1), ("path_ancestros.id", 1)])
