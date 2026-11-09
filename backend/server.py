@@ -63,6 +63,18 @@ db = mongo_client[DB_NAME]
 app = FastAPI(title="STRE - Backend Electoral", version="1.0.0")
 api = APIRouter(prefix="/api")
 
+_RESULTADOS_PUBLICOS_TTL_SEGUNDOS = 10
+_resultados_publicos_cache: dict[str, tuple[float, dict]] = {}
+_resultados_publicos_versiones: dict[str, int] = {}
+_resultados_publicos_locks: dict[str, asyncio.Lock] = {}
+
+
+def _invalidar_cache_resultados_publicos(id_eleccion: str) -> None:
+    _resultados_publicos_cache.pop(id_eleccion, None)
+    _resultados_publicos_versiones[id_eleccion] = (
+        _resultados_publicos_versiones.get(id_eleccion, 0) + 1
+    )
+
 
 class GestorResultadosEnVivo:
     def __init__(self):
@@ -84,6 +96,7 @@ class GestorResultadosEnVivo:
             self.conexiones.pop(id_eleccion, None)
 
     async def publicar(self, id_eleccion: str, evento: dict) -> None:
+        _invalidar_cache_resultados_publicos(id_eleccion)
         canales_resultados_publicos.publicar(id_eleccion)
         conexiones = list(self.conexiones.get(id_eleccion, set()))
         for websocket in conexiones:
@@ -2175,21 +2188,27 @@ def _clave_orden_anfora(anfora: dict) -> tuple:
     return _clave_orden_natural(anfora, "numero_anfora")
 
 
-async def _consolidado_publico(id_eleccion: str) -> dict:
-    proceso = await db.procesos_electorales.find_one(
-        {"id_eleccion": id_eleccion, "activo": True},
-        {"_id": 0},
-    )
+async def _consolidado_publico(
+    id_eleccion: str,
+    proceso: Optional[dict] = None,
+    actas: Optional[List[dict]] = None,
+) -> dict:
+    if proceso is None:
+        proceso = await db.procesos_electorales.find_one(
+            {"id_eleccion": id_eleccion, "activo": True},
+            {"_id": 0},
+        )
     if not proceso:
         raise HTTPException(404, "Elección pública no encontrada")
-    actas = await db.actas.find(
-        {
-            "id_eleccion": id_eleccion,
-            "id_anfora": {"$exists": True, "$ne": None},
-            "esta_bloqueada": True,
-        },
-        {"_id": 0, "id_anfora": 1, "conteos": 1},
-    ).sort("actualizado_en", -1).to_list(20000)
+    if actas is None:
+        actas = await db.actas.find(
+            {
+                "id_eleccion": id_eleccion,
+                "id_anfora": {"$exists": True, "$ne": None},
+                "esta_bloqueada": True,
+            },
+            {"_id": 0, "id_anfora": 1, "conteos": 1, "esta_bloqueada": 1, "actualizado_en": 1},
+        ).sort("actualizado_en", -1).to_list(20000)
     actas = _actas_unicas_por_anfora(actas)
     resultados = {}
     for papeleta in proceso.get("papeletas", []):
@@ -2430,28 +2449,41 @@ async def acta_publica(id_eleccion: str, id_anfora: str):
 
 
 @api.get("/publico/procesos/{id_eleccion}/resultados")
-async def resultados_publicos(id_eleccion: str):
-    consolidado = await _consolidado_publico(id_eleccion)
-    total_anforas = await db.anforas_mesa.count_documents({"id_eleccion": id_eleccion})
-    actas = await db.actas.find(
-        {
-            "id_eleccion": id_eleccion,
-            "id_anfora": {"$exists": True, "$ne": None},
-            "esta_bloqueada": True,
-        },
-        {
-            "_id": 0,
-            "id": 1,
-            "id_anfora": 1,
-            "numero_anfora": 1,
-            "recinto": 1,
-            "ambiente": 1,
-            "tipo_mesa": 1,
-            "actualizado_en": 1,
-        },
-    ).sort("actualizado_en", -1).to_list(20000)
-    escrutadas = len({acta["id_anfora"] for acta in actas})
-    actas_recientes = _actas_unicas_por_anfora(actas)[:10]
+async def _generar_resultados_publicos(id_eleccion: str) -> dict:
+    filtro_actas = {
+        "id_eleccion": id_eleccion,
+        "id_anfora": {"$exists": True, "$ne": None},
+        "esta_bloqueada": True,
+    }
+    proceso, actas, total_anforas = await asyncio.gather(
+        db.procesos_electorales.find_one(
+            {"id_eleccion": id_eleccion, "activo": True},
+            {"_id": 0},
+        ),
+        db.actas.find(
+            filtro_actas,
+            {
+                "_id": 0,
+                "id": 1,
+                "id_anfora": 1,
+                "id_mesa": 1,
+                "numero_anfora": 1,
+                "recinto": 1,
+                "ambiente": 1,
+                "tipo_mesa": 1,
+                "esta_bloqueada": 1,
+                "actualizado_en": 1,
+                "conteos": 1,
+            },
+        ).sort("actualizado_en", -1).to_list(20000),
+        db.anforas_mesa.count_documents({"id_eleccion": id_eleccion}),
+    )
+    if not proceso:
+        raise HTTPException(404, "Elección pública no encontrada")
+
+    actas_unicas = _actas_unicas_por_anfora(actas)
+    consolidado = await _consolidado_publico(id_eleccion, proceso, actas_unicas)
+    escrutadas = len(actas_unicas)
     faltantes = max(0, total_anforas - escrutadas)
     porcentaje = lambda valor: round((valor / total_anforas * 100) if total_anforas else 0, 2)
     consolidado["anforas"] = {
@@ -2461,10 +2493,40 @@ async def resultados_publicos(id_eleccion: str):
         "porcentaje_escrutadas": porcentaje(escrutadas),
         "porcentaje_faltantes": porcentaje(faltantes),
     }
-    consolidado["actas_recientes"] = actas_recientes
-    if consolidado["proceso"]["tipo"] == "universitaria":
-        consolidado["universitario"] = await _calcular_resultado_universitario(id_eleccion)
+    consolidado["actas_recientes"] = actas_unicas[:10]
+    if proceso.get("tipo") == "universitaria":
+        consolidado["universitario"] = await _calcular_resultado_universitario(
+            id_eleccion,
+            proceso=proceso,
+            actas=actas_unicas,
+            solo_lectura=True,
+        )
     return consolidado
+
+
+@api.get("/publico/procesos/{id_eleccion}/resultados")
+async def resultados_publicos(id_eleccion: str):
+    loop = asyncio.get_running_loop()
+    ahora = loop.time()
+    cache = _resultados_publicos_cache.get(id_eleccion)
+    if cache and cache[0] > ahora:
+        return cache[1]
+
+    lock = _resultados_publicos_locks.setdefault(id_eleccion, asyncio.Lock())
+    async with lock:
+        ahora = loop.time()
+        cache = _resultados_publicos_cache.get(id_eleccion)
+        if cache and cache[0] > ahora:
+            return cache[1]
+
+        version = _resultados_publicos_versiones.get(id_eleccion, 0)
+        resultados = await _generar_resultados_publicos(id_eleccion)
+        if _resultados_publicos_versiones.get(id_eleccion, 0) == version:
+            _resultados_publicos_cache[id_eleccion] = (
+                loop.time() + _RESULTADOS_PUBLICOS_TTL_SEGUNDOS,
+                resultados,
+            )
+        return resultados
 
 # ------------- Admin: Gestión de Elecciones (CRUD dinámico) -------------
 TIPO_A_PREFIJO = {
