@@ -30,6 +30,7 @@ const porcentaje = (valor) => (
     ? "—"
     : `${Number(valor).toLocaleString("es-BO", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}%`
 );
+const PAPELETAS_VACIAS = [];
 
 function etiquetaBase(base) {
   return ({
@@ -138,10 +139,13 @@ function TablaEstamento({ nombre, resultado }) {
 
 export default function ReportesPage() {
   const { procesoActivo } = useAuth();
+  const papeletas = procesoActivo?.papeletas || PAPELETAS_VACIAS;
   const [localizador, setLocalizador] = useState(null);
   const [cargandoFiltros, setCargandoFiltros] = useState(true);
   const [errorFiltros, setErrorFiltros] = useState("");
   const [rutaNodos, setRutaNodos] = useState([]);
+  const [idPapeleta, setIdPapeleta] = useState("");
+  const [idFranja, setIdFranja] = useState("");
   const [idRecinto, setIdRecinto] = useState("");
   const [idMesa, setIdMesa] = useState("");
   const [numeroAnfora, setNumeroAnfora] = useState("");
@@ -172,15 +176,49 @@ export default function ReportesPage() {
   );
   const anforasFiltradas = useMemo(() => {
     if (!localizador) return [];
+    const anforasDePapeleta = idPapeleta
+      ? (localizador.anforas || []).filter((item) => (item.id_papeletas || []).includes(idPapeleta))
+      : localizador.anforas || [];
     const anforas = numeroAnfora.trim()
-      ? (localizador.anforas || []).filter((item) => String(item.numero_anfora).toLowerCase().includes(numeroAnfora.trim().toLowerCase()))
-      : filtrarAnforasPorEstructura(localizador.anforas || [], rutaNodos, idRecinto, idMesa);
+      ? anforasDePapeleta.filter((item) => String(item.numero_anfora).toLowerCase().includes(numeroAnfora.trim().toLowerCase()))
+      : filtrarAnforasPorEstructura(anforasDePapeleta, rutaNodos, idRecinto, idMesa);
     return ordenarAnforasNumericamente(anforas);
-  }, [localizador, numeroAnfora, rutaNodos, idRecinto, idMesa]);
+  }, [localizador, numeroAnfora, rutaNodos, idRecinto, idMesa, idPapeleta]);
 
   const limpiarReporte = () => {
     setReporte(null);
     setErrorReporte("");
+  };
+  useEffect(() => {
+    setIdPapeleta("");
+    setIdFranja("");
+    setReporte(null);
+    setErrorReporte("");
+  }, [procesoActivo?.id_eleccion]);
+  const franjasDisponibles = useMemo(
+    () => papeletas
+      .filter((papeleta) => !idPapeleta || papeleta.id_papeleta === idPapeleta)
+      .flatMap((papeleta) => (papeleta.franjas || []).map((franja) => ({
+        ...franja,
+        id_papeleta: papeleta.id_papeleta,
+        nombre_papeleta: papeleta.nombre,
+      }))),
+    [papeletas, idPapeleta],
+  );
+  const cambiarPapeletaReporte = (valor) => {
+    limpiarReporte();
+    setIdPapeleta(valor === "__todas_papeletas__" ? "" : valor);
+    setIdFranja("");
+  };
+  const cambiarFranjaReporte = (valor) => {
+    limpiarReporte();
+    if (valor === "__todas_franjas__") {
+      setIdFranja("");
+      return;
+    }
+    const franja = franjasDisponibles.find((item) => item.id_franja === valor);
+    setIdFranja(valor);
+    if (franja?.id_papeleta) setIdPapeleta(franja.id_papeleta);
   };
   const aplicarBusquedaDirecta = (valor) => {
     limpiarReporte();
@@ -227,6 +265,8 @@ export default function ReportesPage() {
       if (!numeroAnfora.trim() && idRecinto) params.append("id_recinto", idRecinto);
       if (!numeroAnfora.trim() && idMesa) params.append("id_mesa", idMesa);
       if (numeroAnfora.trim()) params.append("numero_anfora", numeroAnfora.trim());
+      if (idPapeleta) params.append("id_papeleta", idPapeleta);
+      if (idFranja) params.append("id_franja", idFranja);
       const query = params.toString();
       const { data } = await api.get(`/admin/procesos/${encodeURIComponent(procesoActivo.id_eleccion)}/reportes${query ? `?${query}` : ""}`);
       setReporte(data);
@@ -239,6 +279,16 @@ export default function ReportesPage() {
   };
 
   const esUniversitaria = (reporte?.proceso?.tipo || procesoActivo?.tipo) === "universitaria";
+  const nombrePapeletaSeleccionada = papeletas.find(
+    (papeleta) => papeleta.id_papeleta === idPapeleta,
+  )?.nombre;
+  const nombreFranjaSeleccionada = franjasDisponibles.find(
+    (franja) => franja.id_franja === idFranja,
+  )?.titulo;
+  const etiquetaFiltrosElectorales = [
+    nombrePapeletaSeleccionada || "Todas las papeletas",
+    nombreFranjaSeleccionada || "Todas las franjas",
+  ].join(" · ");
   const imprimir = () => window.print();
 
   return (
@@ -258,7 +308,50 @@ export default function ReportesPage() {
           </Button>
         </header>
 
-        <section className="mt-5 border border-slate-200 bg-white p-4 sm:p-5" aria-label="Filtros de reportes">
+        <section className="mt-5 border border-blue-200 bg-blue-50/50 p-4 sm:p-5" aria-label="Selección de papeleta y franja" data-testid="filtros-papeleta-franja-reportes">
+          <div>
+            <h2 className="font-display text-base font-bold text-slate-900">Papeleta y franja</h2>
+            <p className="mt-1 text-xs text-slate-500">Seleccione primero la papeleta y, si lo necesita, una franja específica.</p>
+          </div>
+          <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <label className="text-xs font-semibold text-slate-600">
+              Papeleta
+              <Select
+                value={idPapeleta || "__todas_papeletas__"}
+                onValueChange={cambiarPapeletaReporte}
+                disabled={!papeletas.length}
+              >
+                <SelectTrigger className="mt-1 h-10" data-testid="filtro-papeleta-reportes"><SelectValue placeholder="Todas las papeletas" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__todas_papeletas__">Todas las papeletas</SelectItem>
+                  {papeletas.map((papeleta) => (
+                    <SelectItem key={papeleta.id_papeleta} value={papeleta.id_papeleta}>{papeleta.nombre}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </label>
+            <label className="text-xs font-semibold text-slate-600">
+              Franja
+              <Select
+                value={idFranja || "__todas_franjas__"}
+                onValueChange={cambiarFranjaReporte}
+                disabled={!franjasDisponibles.length}
+              >
+                <SelectTrigger className="mt-1 h-10" data-testid="filtro-franja-reportes"><SelectValue placeholder="Todas las franjas" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__todas_franjas__">Todas las franjas</SelectItem>
+                  {franjasDisponibles.map((franja) => (
+                    <SelectItem key={franja.id_franja} value={franja.id_franja}>
+                      {idPapeleta ? franja.titulo : `${franja.nombre_papeleta} · ${franja.titulo}`}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </label>
+          </div>
+        </section>
+
+        <section className="mt-4 border border-slate-200 bg-white p-4 sm:p-5" aria-label="Filtros de reportes">
           <div className="flex items-center gap-2">
             <Search className="h-4 w-4 text-[#1E3A8A]" />
             <h2 className="font-display text-base font-bold text-slate-900">Alcance del reporte</h2>
@@ -360,7 +453,8 @@ export default function ReportesPage() {
               <Button variant="outline" onClick={imprimir} className="reportes-print-button"><Printer className="h-4 w-4" /> Imprimir / Guardar como PDF</Button>
             </div>
             <div className="mt-3 flex flex-wrap gap-x-5 gap-y-1 text-xs text-slate-600">
-              <span><strong className="text-slate-800">Filtros:</strong> {filtroIds}</span>
+                <span><strong className="text-slate-800">Papeleta / franja:</strong> {etiquetaFiltrosElectorales}</span>
+                <span><strong className="text-slate-800">Alcance:</strong> {filtroIds}</span>
               <span><strong className="text-slate-800">Ánforas encontradas:</strong> {numero(reporte.filtros?.anforas_encontradas)}</span>
               <span><strong className="text-slate-800">Actas esperadas:</strong> {numero(reporte.filtros?.actas_esperadas)}</span>
               <span><strong className="text-slate-800">Actas consolidadas:</strong> {numero(reporte.filtros?.actas_consolidadas)}</span>

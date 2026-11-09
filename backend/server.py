@@ -3708,8 +3708,11 @@ async def normalizar_identificadores_demo(
     admin: dict = Depends(requerir_admin),
 ):
     await _validar_proceso(id_eleccion)
+    filtro_anforas = {"id_eleccion": id_eleccion}
+    if id_papeleta_filtro:
+        filtro_anforas["id_papeletas"] = id_papeleta_filtro
     anforas = await db.anforas_mesa.find(
-        {"id_eleccion": id_eleccion},
+        filtro_anforas,
         {"_id": 0, "id": 1},
     ).sort([("creado_en", 1), ("id", 1)]).to_list(50000)
     mesas = await db.mesas_sufragio.find(
@@ -4679,6 +4682,8 @@ async def generar_reportes_eleccion(
     id_recinto: Optional[str] = None,
     id_mesa: Optional[str] = None,
     numero_anfora: Optional[str] = None,
+    id_papeleta: Optional[str] = None,
+    id_franja: Optional[str] = None,
     admin: dict = Depends(requerir_admin),
 ):
     proceso = await db.procesos_electorales.find_one(
@@ -4696,6 +4701,48 @@ async def generar_reportes_eleccion(
     )
     if not proceso:
         raise HTTPException(404, "Proceso electoral no encontrado")
+
+    papeletas = proceso.get("papeletas", [])
+    papeleta_por_franja = {
+        franja.get("id_franja"): papeleta
+        for papeleta in papeletas
+        for franja in papeleta.get("franjas", [])
+        if franja.get("id_franja")
+    }
+    papeleta_seleccionada = next(
+        (
+            papeleta for papeleta in papeletas
+            if papeleta.get("id_papeleta") == id_papeleta
+        ),
+        None,
+    ) if id_papeleta else None
+    if id_papeleta and not papeleta_seleccionada:
+        raise HTTPException(400, "La papeleta seleccionada no pertenece a esta elección")
+
+    papeleta_de_franja = papeleta_por_franja.get(id_franja) if id_franja else None
+    if id_franja and not papeleta_de_franja:
+        raise HTTPException(400, "La franja seleccionada no pertenece a esta elección")
+    if (
+        papeleta_seleccionada
+        and papeleta_de_franja
+        and papeleta_seleccionada.get("id_papeleta") != papeleta_de_franja.get("id_papeleta")
+    ):
+        raise HTTPException(400, "La franja seleccionada no pertenece a la papeleta")
+    if papeleta_de_franja:
+        papeleta_seleccionada = papeleta_de_franja
+    id_papeleta_filtro = (
+        papeleta_seleccionada.get("id_papeleta")
+        if papeleta_seleccionada
+        else None
+    )
+    ids_franjas_seleccionadas = {
+        franja.get("id_franja")
+        for papeleta in papeletas
+        if not id_papeleta_filtro or papeleta.get("id_papeleta") == id_papeleta_filtro
+        for franja in papeleta.get("franjas", [])
+        if franja.get("id_franja")
+        and (not id_franja or franja.get("id_franja") == id_franja)
+    }
 
     anforas = await db.anforas_mesa.find(
         {"id_eleccion": id_eleccion},
@@ -4731,6 +4778,11 @@ async def generar_reportes_eleccion(
             )
         )
     ]
+    if id_papeleta_filtro:
+        anforas = [
+            anfora for anfora in anforas
+            if id_papeleta_filtro in (anfora.get("id_papeletas") or [])
+        ]
     ids_anforas = [anfora["id"] for anfora in anforas]
     actas = []
     if ids_anforas:
@@ -4750,6 +4802,10 @@ async def generar_reportes_eleccion(
             },
         ).sort("actualizado_en", -1).to_list(20000)
     actas = _actas_unicas_por_anfora(actas, proceso)
+    actas = [
+        acta for acta in actas
+        if acta.get("id_franja") in ids_franjas_seleccionadas
+    ]
     mesas = await db.mesas_sufragio.find(
         {
             "id_eleccion": id_eleccion,
@@ -4775,6 +4831,8 @@ async def generar_reportes_eleccion(
     for papeleta in proceso.get("papeletas", []):
         for franja in papeleta.get("franjas", []):
             id_franja = franja["id_franja"]
+            if id_franja not in ids_franjas_seleccionadas:
+                continue
             id_papeleta = papeleta.get("id_papeleta")
             franjas[id_franja] = {
                 "id_franja": id_franja,
@@ -4875,7 +4933,11 @@ async def generar_reportes_eleccion(
         id_anfora for id_anfora, _ in ids_actas_consolidadas
     }
     franjas_por_papeleta = {
-        papeleta.get("id_papeleta"): len(papeleta.get("franjas", []))
+        papeleta.get("id_papeleta"): sum(
+            1
+            for franja in papeleta.get("franjas", [])
+            if franja.get("id_franja") in ids_franjas_seleccionadas
+        )
         for papeleta in proceso.get("papeletas", [])
     }
     actas_esperadas = sum(
@@ -4897,6 +4959,26 @@ async def generar_reportes_eleccion(
             ),
         },
         "filtros": {
+            "id_papeleta": id_papeleta_filtro,
+            "nombre_papeleta": (
+                papeleta_seleccionada.get("nombre")
+                if papeleta_seleccionada
+                else "Todas las papeletas"
+            ),
+            "id_franja": id_franja,
+            "titulo_franja": (
+                next(
+                    (
+                        franja.get("titulo")
+                        for papeleta in papeletas
+                        for franja in papeleta.get("franjas", [])
+                        if franja.get("id_franja") == id_franja
+                    ),
+                    None,
+                )
+                if id_franja
+                else "Todas las franjas"
+            ),
             "anforas_encontradas": len(anforas),
             "actas_consolidadas": len(ids_actas_consolidadas),
             "anforas_faltantes": max(0, len(anforas) - len(ids_anforas_consolidadas)),
